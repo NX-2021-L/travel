@@ -27,12 +27,18 @@ rm -rf "${BUILD_DIR}" "${ZIP_FILE}"
 mkdir -p "${BUILD_DIR}"
 
 # Install dependencies for Lambda arm64 target.
-# Use --platform to get correct binaries, but allow source fallback
-# for pure-Python packages that don't publish platform wheels.
+# Pass 1: Cross-platform binaries for compiled C extensions
 pip install \
   --platform manylinux2014_aarch64 \
   --implementation cp \
   --python-version 3.12 \
+  --only-binary=:all: \
+  --target "${BUILD_DIR}" \
+  cryptography cffi pydantic-core \
+  --quiet
+
+# Pass 2: Everything else (pure-Python packages install natively)
+pip install \
   --target "${BUILD_DIR}" \
   -r "${SCRIPT_DIR}/requirements.txt" \
   --quiet
