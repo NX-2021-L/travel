@@ -5,7 +5,7 @@ set -euo pipefail
 # Follows the Enceladus Lambda deployment pattern
 
 FUNCTION_NAME="io-travel-mcp-server"
-ROLE_NAME="io-travel-mcp-lambda-role"
+ROLE_ARN="${LAMBDA_ROLE_ARN:-arn:aws:iam::356364570033:role/io-travel-mcp-lambda-role}"
 REGION="${AWS_REGION:-us-west-2}"
 RUNTIME="python3.12"
 ARCHITECTURE="arm64"
@@ -44,8 +44,7 @@ cd "${BUILD_DIR}"
 zip -r "${ZIP_FILE}" . -x '*.pyc' '__pycache__/*' '*.dist-info/*' --quiet
 log "Package size: $(du -h "${ZIP_FILE}" | cut -f1)"
 
-# --- Get role ARN ---
-ROLE_ARN=$(aws iam get-role --role-name "${ROLE_NAME}" --query 'Role.Arn' --output text)
+# --- Role ARN ---
 log "Using role: ${ROLE_ARN}"
 
 # --- Deploy ---
