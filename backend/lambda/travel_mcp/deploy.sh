@@ -8,7 +8,7 @@ FUNCTION_NAME="io-travel-mcp-server"
 ROLE_ARN="${LAMBDA_ROLE_ARN:-arn:aws:iam::356364570033:role/io-travel-mcp-lambda-role}"
 REGION="${AWS_REGION:-us-west-2}"
 RUNTIME="python3.12"
-ARCHITECTURE="arm64"
+ARCHITECTURE="x86_64"
 MEMORY=512
 TIMEOUT=30
 HANDLER="lambda_function.lambda_handler"
@@ -26,36 +26,12 @@ log "Building Lambda package..."
 rm -rf "${BUILD_DIR}" "${ZIP_FILE}"
 mkdir -p "${BUILD_DIR}"
 
-# Install dependencies for Lambda arm64 target.
-# Strategy: install everything natively first (resolves versions correctly),
-# then overwrite compiled extensions with arm64 platform binaries.
-
-# Pass 1: Install all deps natively (correct version resolution)
+# Install dependencies — native x86_64 pip install matches the
+# GitHub Actions runner and Lambda x86_64 architecture.
 pip install \
   --target "${BUILD_DIR}" \
   -r "${SCRIPT_DIR}/requirements.txt" \
   --quiet
-
-# Pass 2: Overwrite compiled C extensions with arm64 binaries
-# Use the exact versions that pass 1 resolved to avoid mismatches
-PYDANTIC_CORE_VER=$(pip show --path "${BUILD_DIR}" pydantic-core 2>/dev/null | grep Version | cut -d' ' -f2 || echo "")
-CRYPTOGRAPHY_VER=$(pip show --path "${BUILD_DIR}" cryptography 2>/dev/null | grep Version | cut -d' ' -f2 || echo "")
-
-BINARY_PKGS=""
-[ -n "${PYDANTIC_CORE_VER}" ] && BINARY_PKGS="${BINARY_PKGS} pydantic-core==${PYDANTIC_CORE_VER}"
-[ -n "${CRYPTOGRAPHY_VER}" ] && BINARY_PKGS="${BINARY_PKGS} cryptography==${CRYPTOGRAPHY_VER}"
-
-if [ -n "${BINARY_PKGS}" ]; then
-  pip install \
-    --platform manylinux2014_aarch64 \
-    --implementation cp \
-    --python-version 3.12 \
-    --only-binary=:all: \
-    --target "${BUILD_DIR}" \
-    --upgrade --force-reinstall --no-deps \
-    ${BINARY_PKGS} \
-    --quiet
-fi
 
 # Copy function code
 cp "${SCRIPT_DIR}/lambda_function.py" "${BUILD_DIR}/"
