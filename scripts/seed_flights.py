@@ -30,9 +30,9 @@ REGION = "us-west-2"
 EXCLUDE_COLUMNS = {"discount_1", "discount_2", "discount_source"}
 
 
-def generate_flight_id(date_iso: str, origin: str, dest: str, sequence: str) -> str:
-    """Deterministic flight_id from composite key fields."""
-    raw = f"{date_iso}|{origin}|{dest}|{sequence}"
+def generate_flight_id(date_iso: str, origin: str, dest: str, sequence: str, row_index: int) -> str:
+    """Deterministic flight_id from composite key fields + row index tiebreaker."""
+    raw = f"{date_iso}|{origin}|{dest}|{sequence}|{row_index}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
@@ -48,7 +48,7 @@ def read_parquet_local(path: str) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def transform_row(row: pd.Series, now_iso: str) -> dict:
+def transform_row(row: pd.Series, now_iso: str, row_index: int = 0) -> dict:
     """Transform a Parquet row into a DynamoDB item."""
     # Build date fields
     date_val = row.get("date")
@@ -64,7 +64,7 @@ def transform_row(row: pd.Series, now_iso: str) -> dict:
     origin = str(row.get("origin", "")) if pd.notna(row.get("origin")) else ""
     dest = str(row.get("dest", "")) if pd.notna(row.get("dest")) else ""
     seq = str(row.get("sequence", "0")) if pd.notna(row.get("sequence")) else "0"
-    flight_id = generate_flight_id(date_iso, origin, dest, seq)
+    flight_id = generate_flight_id(date_iso, origin, dest, seq, row_index)
 
     item = {
         "flight_id": flight_id,
@@ -106,8 +106,8 @@ def seed(df: pd.DataFrame, dry_run: bool = False) -> dict:
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     items = []
-    for _, row in df.iterrows():
-        item = transform_row(row, now_iso)
+    for idx, row in df.iterrows():
+        item = transform_row(row, now_iso, row_index=idx)
         items.append(item)
 
     if dry_run:
