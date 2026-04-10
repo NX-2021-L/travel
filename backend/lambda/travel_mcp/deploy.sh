@@ -121,7 +121,7 @@ if ! aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --reg
     aws lambda create-function-url-config \
         --function-name "${FUNCTION_NAME}" \
         --auth-type NONE \
-        --cors '{"AllowOrigins":["https://claude.ai","https://localhost:*"],"AllowMethods":["GET","POST","DELETE","OPTIONS"],"AllowHeaders":["Content-Type","Authorization","Accept","Mcp-Session-Id"],"AllowCredentials":true,"MaxAge":3600}' \
+        --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"],"AllowCredentials":true,"MaxAge":3600}' \
         --region "${REGION}" \
         --output text --query 'FunctionUrl'
 
