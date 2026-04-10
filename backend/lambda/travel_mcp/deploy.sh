@@ -26,29 +26,16 @@ log "Building Lambda package..."
 rm -rf "${BUILD_DIR}" "${ZIP_FILE}"
 mkdir -p "${BUILD_DIR}"
 
-# Install dependencies — two passes:
-# 1. Binary-only for compiled packages (cryptography, etc.)
-# 2. Regular install for pure-Python packages (mcp, PyJWT, etc.)
+# Install dependencies for Lambda arm64 target.
+# Use --platform to get correct binaries, but allow source fallback
+# for pure-Python packages that don't publish platform wheels.
 pip install \
   --platform manylinux2014_aarch64 \
   --implementation cp \
   --python-version 3.12 \
-  --only-binary=:all: \
-  --target "${BUILD_DIR}" \
-  cryptography cffi certifi \
-  --quiet
-
-pip install \
-  --target "${BUILD_DIR}" \
-  --no-deps \
-  -r "${SCRIPT_DIR}/requirements.txt" \
-  --quiet
-
-# Second pass with deps to catch anything missed
-pip install \
   --target "${BUILD_DIR}" \
   -r "${SCRIPT_DIR}/requirements.txt" \
-  --quiet 2>/dev/null || true
+  --quiet
 
 # Copy function code
 cp "${SCRIPT_DIR}/lambda_function.py" "${BUILD_DIR}/"
