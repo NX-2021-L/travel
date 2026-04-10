@@ -81,23 +81,33 @@ fi
 
 # --- Configure ---
 log "Updating function configuration..."
+
+# Build environment JSON — only include non-empty values
+ENV_JSON=$(python3 -c "
+import json, os
+env = {
+    'TABLE_NAME': os.environ.get('TABLE_NAME', 'io-travel-flights'),
+    'MCP_TRANSPORT': 'streamable_http',
+    'COGNITO_USER_POOL_ID': os.environ.get('COGNITO_USER_POOL_ID', ''),
+    'COGNITO_CLIENT_ID': os.environ.get('COGNITO_CLIENT_ID', ''),
+    'COGNITO_CLIENT_SECRET': os.environ.get('COGNITO_CLIENT_SECRET', ''),
+    'COGNITO_DOMAIN': os.environ.get('COGNITO_DOMAIN', ''),
+    'COGNITO_REGION': os.environ.get('COGNITO_REGION', 'us-east-1'),
+    'MCP_API_KEY': os.environ.get('MCP_API_KEY', ''),
+    'SERVER_BASE_URL': os.environ.get('SERVER_BASE_URL', ''),
+}
+# Filter out empty values to avoid AWS CLI parse errors
+filtered = {k: v for k, v in env.items() if v}
+print(json.dumps({'Variables': filtered}))
+")
+
 aws lambda update-function-configuration \
     --function-name "${FUNCTION_NAME}" \
     --runtime "${RUNTIME}" \
     --memory-size "${MEMORY}" \
     --timeout "${TIMEOUT}" \
     --handler "${HANDLER}" \
-    --environment "Variables={
-        TABLE_NAME=${TABLE_NAME:-io-travel-flights},
-        MCP_TRANSPORT=streamable_http,
-        COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-},
-        COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-},
-        COGNITO_CLIENT_SECRET=${COGNITO_CLIENT_SECRET:-},
-        COGNITO_DOMAIN=${COGNITO_DOMAIN:-},
-        COGNITO_REGION=${COGNITO_REGION:-us-east-1},
-        MCP_API_KEY=${MCP_API_KEY:-},
-        SERVER_BASE_URL=${SERVER_BASE_URL:-}
-    }" \
+    --environment "${ENV_JSON}" \
     --region "${REGION}" \
     --output text --query 'FunctionArn'
 
