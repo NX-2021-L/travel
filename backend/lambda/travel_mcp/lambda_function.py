@@ -723,6 +723,85 @@ async def _cancel_flight(args: dict) -> list:
     return _success(response["Attributes"])
 
 
+async def _create_flight(args: dict) -> list:
+    """Create a new flight record."""
+    # Enforce required fields
+    date_str = args.get("date")
+    origin = args.get("origin")
+    dest = args.get("dest")
+
+    missing = []
+    if not date_str:
+        missing.append("date")
+    if not origin:
+        missing.append("origin")
+    if not dest:
+        missing.append("dest")
+    if missing:
+        return _error("missing_param", f"Required field(s) missing: {', '.join(missing)}")
+
+    # Parse and validate date
+    try:
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        date_iso = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        date_yyyy_mm = dt.strftime("%Y-%m")
+    except (ValueError, AttributeError):
+        return _error("invalid_date", f"Invalid date format: {date_str}. Use ISO 8601 (e.g. 2025-06-15).")
+
+    # Deterministic flight_id (row_index=0 for manually created records)
+    seq = str(args.get("sequence", "0")) if args.get("sequence") is not None else "0"
+    flight_id = hashlib.sha256(f"{date_iso}|{origin}|{dest}|{seq}|0".encode()).hexdigest()[:12]
+
+    now = _now_iso()
+    item: Dict[str, Any] = {
+        "flight_id": flight_id,
+        "date_iso": date_iso,
+        "date_yyyy_mm": date_yyyy_mm,
+        "origin": origin.upper(),
+        "dest": dest.upper(),
+        "status": "active",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # Optional fields
+    OPTIONAL_FIELDS = {
+        "cost_type": str, "trip_city": str, "airline": str,
+        "booked_class": str, "international": bool,
+        "eqm_miles": Decimal, "base_fare": Decimal,
+        "extra_fees": Decimal, "total_paid": Decimal,
+        "funding_source": str, "confirmation_code": str,
+        "flight_number": str, "website": str, "sequence": Decimal,
+    }
+
+    for field, field_type in OPTIONAL_FIELDS.items():
+        val = args.get(field)
+        if val is not None:
+            if field_type == Decimal:
+                item[field] = Decimal(str(round(float(val), 2)))
+            elif field_type == bool:
+                item[field] = bool(val)
+            else:
+                item[field] = str(val)
+
+    table = _get_table()
+
+    # Reject duplicates with ConditionExpression
+    try:
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(flight_id)",
+        )
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        return _error(
+            "duplicate",
+            f"Flight {flight_id} already exists (same date/origin/dest/sequence). Use update_flight to modify it.",
+            status=409,
+        )
+
+    return _success(item)
+
+
 # ---------------------------------------------------------------------------
 # MCP Server setup
 # ---------------------------------------------------------------------------
@@ -732,6 +811,7 @@ app = Server("io-travel")
 _TOOL_HANDLERS = {
     "search_flights": _search_flights,
     "get_flight": _get_flight,
+    "create_flight": _create_flight,
     "update_flight": _update_flight,
     "cancel_flight": _cancel_flight,
 }
@@ -770,6 +850,33 @@ async def list_tools() -> list[Tool]:
                     "flight_id": {"type": "string", "description": "The flight record ID"},
                 },
                 "required": ["flight_id"],
+            },
+        ),
+        Tool(
+            name="create_flight",
+            description="Create a new flight record. Requires date, origin, and destination airport codes. Generates a unique flight ID. Rejects duplicates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "Flight date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T08:30:00Z)"},
+                    "origin": {"type": "string", "description": "Origin airport code (e.g. SEA)"},
+                    "dest": {"type": "string", "description": "Destination airport code (e.g. SFO)"},
+                    "cost_type": {"type": "string", "description": "Cost type (Air, Car, Airfare, Hotel)"},
+                    "trip_city": {"type": "string", "description": "Trip city name"},
+                    "airline": {"type": "string", "description": "Airline name (e.g. Alaska)"},
+                    "booked_class": {"type": "string", "description": "Booking class (First, Economy, Business, etc.)"},
+                    "international": {"type": "boolean", "description": "International flight flag"},
+                    "eqm_miles": {"type": "number", "description": "Elite qualifying miles"},
+                    "base_fare": {"type": "number", "description": "Base fare amount"},
+                    "extra_fees": {"type": "number", "description": "Extra fees amount"},
+                    "total_paid": {"type": "number", "description": "Total paid amount"},
+                    "funding_source": {"type": "string", "description": "Payment source (e.g. AMEX 0308)"},
+                    "confirmation_code": {"type": "string", "description": "Booking confirmation code"},
+                    "flight_number": {"type": "string", "description": "Flight number (e.g. AS123)"},
+                    "website": {"type": "string", "description": "Booking website"},
+                    "sequence": {"type": "number", "description": "Trip leg sequence number"},
+                },
+                "required": ["date", "origin", "dest"],
             },
         ),
         Tool(
