@@ -38,7 +38,7 @@ cp "${SCRIPT_DIR}/lambda_function.py" "${BUILD_DIR}/"
 
 # Create zip
 cd "${BUILD_DIR}"
-zip -r "${ZIP_FILE}" . -x '*.pyc' '__pycache__/*' '*.dist-info/*' --quiet
+zip -r "${ZIP_FILE}" . -x '*.pyc' '__pycache__/*' --quiet
 log "Package size: $(du -h "${ZIP_FILE}" | cut -f1)"
 
 # --- Role ARN ---
