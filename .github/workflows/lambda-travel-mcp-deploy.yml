@@ -1,0 +1,56 @@
+name: Lambda Deploy - travel-mcp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/lambda/travel_mcp/**"
+      - ".github/workflows/lambda-travel-mcp-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this deploy is being triggered"
+        type: string
+        required: false
+        default: "manual deploy"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Deploy Lambda
+        env:
+          TABLE_NAME: io-travel-flights
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
+          COGNITO_CLIENT_SECRET: ${{ secrets.COGNITO_CLIENT_SECRET }}
+          COGNITO_DOMAIN: ${{ secrets.COGNITO_DOMAIN }}
+          COGNITO_REGION: us-east-1
+          MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
+          SERVER_BASE_URL: ${{ secrets.SERVER_BASE_URL }}
+        run: bash backend/lambda/travel_mcp/deploy.sh
+
+      - name: Verify deployment
+        run: |
+          aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
+            --query 'Configuration.{State:State,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}'
+          aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
+            --query 'FunctionUrl' --output text || echo "No Function URL configured yet"
