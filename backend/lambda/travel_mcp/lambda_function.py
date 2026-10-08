@@ -31,6 +31,7 @@ import anyio
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
@@ -474,48 +475,48 @@ def _error(code: str, message: str, status: int = 400, retryable: bool = False) 
 # Tool handlers
 # ---------------------------------------------------------------------------
 
-async def _search_flights(args: dict) -> list:
-    """Search flights with optional filters and pagination."""
-    table = _get_table()
+# DynamoDB's ``Limit`` bounds the items *evaluated*, before any FilterExpression
+# runs, so one filtered call can return fewer rows than asked for -- even none --
+# while matches remain (FLY-ISS-001).  _read_page keeps reading until it holds a
+# full page or the key space is exhausted, within these bounds.
+SEARCH_EVAL_CHUNK = 200    # items evaluated per DynamoDB call when a filter applies
+SEARCH_MAX_DDB_CALLS = 20  # DynamoDB calls per tool call; once spent, a cursor carries on
 
+# Key attributes of a resume cursor (ExclusiveStartKey), by access path.
+_INDEX_KEY_ATTRS = {
+    None: ("flight_id",),
+    "route-index": ("flight_id", "origin", "dest"),
+    "trip-city-index": ("flight_id", "trip_city", "date_iso"),
+}
+
+
+def _date_upper_bound(date_to: str) -> str:
+    """A date-only upper bound means "through the end of that day"."""
+    return f"{date_to}T23:59:59Z" if len(date_to) == 10 else date_to
+
+
+def _build_search_query(args: dict) -> tuple:
+    """Choose the access path; whatever the path cannot cover becomes a filter.
+
+    Returns (kwargs, use_query) for table.query / table.scan, without Limit or
+    ExclusiveStartKey.
+    """
     date_from = args.get("date_from")
-    date_to = args.get("date_to")
+    date_to = _date_upper_bound(args["date_to"]) if args.get("date_to") else None
     origin = args.get("origin")
     dest = args.get("dest")
-    airline = args.get("airline")
-    booked_class = args.get("booked_class")
     trip_city = args.get("trip_city")
-    status = args.get("status")
-    cost_type = args.get("cost_type")
-    international = args.get("international")
-    next_token = args.get("next_token")
-    limit = min(int(args.get("limit", 50)), 50)
 
-    filter_expr = None
-    scan_kwargs: Dict[str, Any] = {"Limit": limit}
+    kwargs: Dict[str, Any] = {}
+    key_attrs: set = set()
+    dates_in_key = False
 
-    def _add_filter(expr):
-        nonlocal filter_expr
-        filter_expr = expr if filter_expr is None else (filter_expr & expr)
-
-    # Build filter expressions for non-indexed fields
-    if airline:
-        _add_filter(Attr("airline").eq(airline))
-    if booked_class:
-        _add_filter(Attr("booked_class").eq(booked_class))
-    if status:
-        _add_filter(Attr("status").eq(status))
-    if cost_type:
-        _add_filter(Attr("cost_type").eq(cost_type))
-    if international is not None:
-        _add_filter(Attr("international").eq(bool(international)))
-
-    use_query = False
-
-    # Strategy: pick the best GSI based on available filters
-    if trip_city and not (origin and dest) and not (date_from or date_to):
-        # Use trip-city-index
-        scan_kwargs["IndexName"] = "trip-city-index"
+    if origin and dest:
+        kwargs["IndexName"] = "route-index"
+        kwargs["KeyConditionExpression"] = Key("origin").eq(origin) & Key("dest").eq(dest)
+        key_attrs = {"origin", "dest"}
+    elif trip_city:
+        kwargs["IndexName"] = "trip-city-index"
         kce = Key("trip_city").eq(trip_city)
         if date_from and date_to:
             kce = kce & Key("date_iso").between(date_from, date_to)
@@ -523,65 +524,99 @@ async def _search_flights(args: dict) -> list:
             kce = kce & Key("date_iso").gte(date_from)
         elif date_to:
             kce = kce & Key("date_iso").lte(date_to)
-        scan_kwargs["KeyConditionExpression"] = kce
-        use_query = True
-
-    elif origin and dest:
-        # Use route-index
-        scan_kwargs["IndexName"] = "route-index"
-        scan_kwargs["KeyConditionExpression"] = Key("origin").eq(origin) & Key("dest").eq(dest)
-        if date_from:
-            _add_filter(Attr("date_iso").gte(date_from))
-        if date_to:
-            _add_filter(Attr("date_iso").lte(date_to))
-        if trip_city:
-            _add_filter(Attr("trip_city").eq(trip_city))
-        use_query = True
-
+        kwargs["KeyConditionExpression"] = kce
+        key_attrs = {"trip_city"}
+        dates_in_key = True
     elif origin:
-        # Use route-index with partition key only
-        scan_kwargs["IndexName"] = "route-index"
-        scan_kwargs["KeyConditionExpression"] = Key("origin").eq(origin)
-        if dest:
-            _add_filter(Attr("dest").eq(dest))
-        if date_from:
-            _add_filter(Attr("date_iso").gte(date_from))
-        if date_to:
-            _add_filter(Attr("date_iso").lte(date_to))
-        if trip_city:
-            _add_filter(Attr("trip_city").eq(trip_city))
-        use_query = True
+        kwargs["IndexName"] = "route-index"
+        kwargs["KeyConditionExpression"] = Key("origin").eq(origin)
+        key_attrs = {"origin"}
+    # else: no usable key (dest alone, dates alone, or nothing) -> filtered scan
 
-    elif date_from or date_to:
-        # Use date-index — need a partition key (date_yyyy_mm)
-        # For date range queries spanning months, fall back to scan
+    filters = []
+    for name, value in (("origin", origin), ("dest", dest), ("trip_city", trip_city)):
+        if value and name not in key_attrs:
+            filters.append(Attr(name).eq(value))
+    if not dates_in_key:
         if date_from and date_to:
-            _add_filter(Attr("date_iso").between(date_from, date_to))
+            filters.append(Attr("date_iso").between(date_from, date_to))
         elif date_from:
-            _add_filter(Attr("date_iso").gte(date_from))
+            filters.append(Attr("date_iso").gte(date_from))
         elif date_to:
-            _add_filter(Attr("date_iso").lte(date_to))
-        if trip_city:
-            _add_filter(Attr("trip_city").eq(trip_city))
-        # Scan with filter (acceptable at 294 rows)
+            filters.append(Attr("date_iso").lte(date_to))
+    for name in ("airline", "booked_class", "status", "cost_type"):
+        if args.get(name):
+            filters.append(Attr(name).eq(args[name]))
+    if args.get("international") is not None:
+        filters.append(Attr("international").eq(bool(args["international"])))
 
-    else:
-        # No indexed filter — scan
-        if trip_city:
-            _add_filter(Attr("trip_city").eq(trip_city))
+    if filters:
+        expr = filters[0]
+        for extra in filters[1:]:
+            expr = expr & extra
+        kwargs["FilterExpression"] = expr
 
-    if filter_expr is not None:
-        scan_kwargs["FilterExpression"] = filter_expr
+    return kwargs, "IndexName" in kwargs
 
-    if next_token:
-        scan_kwargs["ExclusiveStartKey"] = json.loads(b64.b64decode(next_token).decode())
 
-    if use_query:
-        response = table.query(**scan_kwargs)
-    else:
-        response = table.scan(**scan_kwargs)
+def _item_key(item: dict, index_name: Optional[str]) -> dict:
+    """The ExclusiveStartKey that resumes immediately after ``item``."""
+    return {attr: item[attr] for attr in _INDEX_KEY_ATTRS[index_name]}
 
-    items = response.get("Items", [])
+
+def _read_page(table, kwargs: dict, use_query: bool, limit: int, start_key: Optional[dict]) -> tuple:
+    """Read up to ``limit`` matching items; returns (items, resume_key).
+
+    resume_key is None only when the search is exhausted.  It is also returned,
+    possibly with a short page, if the DynamoDB call budget runs out first.
+    """
+    read = table.query if use_query else table.scan
+    index_name = kwargs.get("IndexName")
+    filtered = "FilterExpression" in kwargs
+    items: List[dict] = []
+    resume = start_key
+    for _ in range(SEARCH_MAX_DDB_CALLS):
+        call_kwargs = dict(kwargs)
+        # Unfiltered, every evaluated item is returned, so one extra item tells
+        # us whether a next page exists without issuing a cursor to an empty one.
+        call_kwargs["Limit"] = SEARCH_EVAL_CHUNK if filtered else limit + 1
+        if resume:
+            call_kwargs["ExclusiveStartKey"] = resume
+        response = read(**call_kwargs)
+        items.extend(response.get("Items", []))
+        resume = response.get("LastEvaluatedKey")
+        if len(items) > limit:
+            # A further match exists: resume right after the last item returned.
+            return items[:limit], _item_key(items[limit - 1], index_name)
+        if not resume:
+            return items, None
+    return items, resume
+
+
+async def _search_flights(args: dict) -> list:
+    """Search flights with optional filters and pagination."""
+    table = _get_table()
+    limit = max(1, min(int(args.get("limit", 50)), 50))
+
+    start_key = None
+    if args.get("next_token"):
+        try:
+            start_key = json.loads(b64.b64decode(args["next_token"]).decode())
+        except ValueError:
+            start_key = None
+        if not isinstance(start_key, dict):
+            return _error("invalid_next_token", "next_token is not a cursor issued by search_flights")
+
+    kwargs, use_query = _build_search_query(args)
+    try:
+        items, last_key = _read_page(table, kwargs, use_query, limit, start_key)
+    except ClientError as exc:
+        if start_key and exc.response.get("Error", {}).get("Code") == "ValidationException":
+            return _error(
+                "invalid_next_token",
+                "next_token does not belong to this search; repeat the search without it",
+            )
+        raise
 
     # Build summary records
     summaries = []
@@ -601,7 +636,6 @@ async def _search_flights(args: dict) -> list:
 
     result: Dict[str, Any] = {"flights": summaries, "count": len(summaries)}
 
-    last_key = response.get("LastEvaluatedKey")
     if last_key:
         result["next_token"] = b64.b64encode(json.dumps(
             _decimal_to_native(last_key), default=str
@@ -827,7 +861,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "date_from": {"type": "string", "description": "Start date (ISO 8601, e.g. 2025-01-01)"},
-                    "date_to": {"type": "string", "description": "End date (ISO 8601)"},
+                    "date_to": {"type": "string", "description": "End date (ISO 8601); a date-only value includes that whole day"},
                     "origin": {"type": "string", "description": "Origin airport code (e.g. SEA)"},
                     "dest": {"type": "string", "description": "Destination airport code (e.g. SFO)"},
                     "airline": {"type": "string", "description": "Airline name (Alaska, Partner)"},
@@ -837,7 +871,7 @@ async def list_tools() -> list[Tool]:
                     "cost_type": {"type": "string", "description": "Cost type (Air, Car, Airfare, Hotel)"},
                     "international": {"type": "boolean", "description": "International flight filter"},
                     "limit": {"type": "integer", "description": "Max results (1-50, default 50)"},
-                    "next_token": {"type": "string", "description": "Pagination cursor from previous response"},
+                    "next_token": {"type": "string", "description": "Pagination cursor from previous response; absent means no more results"},
                 },
             },
         ),
