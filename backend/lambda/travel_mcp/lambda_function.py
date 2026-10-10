@@ -1020,6 +1020,14 @@ def _tool_specs() -> list[Tool]:
         meta = {}
         if t.name in _X_IO_MINTED:
             meta["x-io-minted"] = list(_X_IO_MINTED[t.name])
+        if t.name in _X_IO_MINTED:
+            schema = json.loads(json.dumps(t.inputSchema))
+            for ptr in _X_IO_MINTED[t.name]:
+                schema["properties"][ptr.rsplit("/", 1)[-1]] = {
+                    "type": "string", "x-io-minted": True,
+                    "description": "Server-minted; read-only, ignored if supplied",
+                }
+            t = t.model_copy(update={"inputSchema": schema})
         tools.append(t.model_copy(update={
             "annotations": ToolAnnotations(**_ANNOTATIONS[t.name]),
             "meta": meta or None,
@@ -1027,31 +1035,24 @@ def _tool_specs() -> list[Tool]:
     return tools
 
 
+_DRY_RUN_TOOLS: tuple = ()  # tools whose server-side dry_run is implemented (DVP-TSK-900)
+
+
 def build_caps() -> Dict[str, Any]:
-    """The io-travel capabilities document (ActionContract list, DOC-3724FD572867 s1.1)."""
+    """The io-travel capabilities document: parity caps.schema 1.1.0 (orchestrator ruling E2-R11)."""
     actions = []
     for t in _tool_specs():
-        schema = t.inputSchema
-        entry = {
-            "surface": "io-travel",
-            "action": t.name,
+        actions.append({
+            "name": t.name,
             "title": t.name.replace("_", " ").title(),
-            "description": t.description,
-            "inputSchema": schema,
+            "inputSchema": t.inputSchema,
+            "outputSchema": None,
             "annotations": dict(_ANNOTATIONS[t.name]),
-            "schemaSource": "declared",
-            "schemaHash": _schema_hash(schema),
             "requiresGovernanceHash": False,
-            "trust": "first-party",
-            "dry_run": t.name in WRITE_TOOLS and _DRY_RUN_ENABLED,
-        }
-        if t.name in _X_IO_MINTED:
-            entry["x-io-minted"] = list(_X_IO_MINTED[t.name])
-        actions.append(entry)
-    return {"v": 1, "surface": "io-travel", "actions": actions}
-
-
-_DRY_RUN_ENABLED = False
+            "via": "top-level",
+            "dryRun": t.name in _DRY_RUN_TOOLS,
+        })
+    return {"schemaVersion": "1.1.0", "surface": "io-travel", "generatedAt": _now_iso(), "actions": actions}
 
 
 def build_permission_manifest() -> Dict[str, Any]:
