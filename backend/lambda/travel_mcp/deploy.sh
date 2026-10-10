@@ -44,6 +44,19 @@ log "Package size: $(du -h "${ZIP_FILE}" | cut -f1)"
 # --- Role ARN ---
 log "Using role: ${ROLE_ARN}"
 
+# --- Resolve environment + guard (before any code is shipped) ---
+# Merge the current function env with values supplied by this shell so variables
+# that are not supplied (e.g. COGNITO_ALLOWED_SUBS) are PRESERVED; refuse to
+# deploy when a Cognito pool is configured with an empty allow-list (E2-R12).
+CURRENT_ENV=$(aws lambda get-function-configuration --function-name "${FUNCTION_NAME}" \
+    --region "${REGION}" --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
+export CURRENT_ENV
+if ! RESOLVED_ENV_JSON=$(python3 "${SCRIPT_DIR}/resolve_env.py"); then
+    log "ABORT: environment guard failed (see message above)"
+    exit 3
+fi
+unset CURRENT_ENV
+
 # --- Deploy ---
 if aws lambda get-function --function-name "${FUNCTION_NAME}" --region "${REGION}" >/dev/null 2>&1; then
     log "Updating existing function..."
@@ -79,24 +92,8 @@ fi
 # --- Configure ---
 log "Updating function configuration..."
 
-# Build environment JSON — only include non-empty values
-ENV_JSON=$(python3 -c "
-import json, os
-env = {
-    'TABLE_NAME': os.environ.get('TABLE_NAME', 'io-travel-flights'),
-    'MCP_TRANSPORT': 'streamable_http',
-    'COGNITO_USER_POOL_ID': os.environ.get('COGNITO_USER_POOL_ID', ''),
-    'COGNITO_CLIENT_ID': os.environ.get('COGNITO_CLIENT_ID', ''),
-    'COGNITO_CLIENT_SECRET': os.environ.get('COGNITO_CLIENT_SECRET', ''),
-    'COGNITO_DOMAIN': os.environ.get('COGNITO_DOMAIN', ''),
-    'COGNITO_REGION': os.environ.get('COGNITO_REGION', 'us-east-1'),
-    'MCP_API_KEY': os.environ.get('MCP_API_KEY', ''),
-    'SERVER_BASE_URL': os.environ.get('SERVER_BASE_URL', ''),
-}
-# Filter out empty values to avoid AWS CLI parse errors
-filtered = {k: v for k, v in env.items() if v}
-print(json.dumps({'Variables': filtered}))
-")
+# Environment is resolved by resolve_env.py (merge with the current function env).
+ENV_JSON="${RESOLVED_ENV_JSON}"
 
 aws lambda update-function-configuration \
     --function-name "${FUNCTION_NAME}" \
