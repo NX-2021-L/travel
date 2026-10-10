@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-west-2")
 ROOT = Path(__file__).resolve().parents[1]
 D = ROOT / "backend" / "lambda" / "travel_mcp"
@@ -15,11 +17,24 @@ import lambda_function as lf  # noqa: E402
 
 def test_caps_has_five_actions_with_annotations():
     caps = lf.build_caps()
+    assert caps["schemaVersion"] == "1.1.0" and caps["surface"] == "io-travel" and caps["generatedAt"]
     assert len(caps["actions"]) == 5
     for a in caps["actions"]:
+        assert set(a) == {"name", "title", "inputSchema", "outputSchema", "annotations",
+                          "requiresGovernanceHash", "via", "dryRun"}
         assert set(a["annotations"]) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
-        assert a["schemaSource"] == "declared" and len(a["schemaHash"]) == 64
-    assert {a["action"] for a in caps["actions"] if "x-io-minted" in a} == {"create_flight"}
+        assert a["via"] == "top-level" and isinstance(a["dryRun"], bool)
+    minted = {a["name"] for a in caps["actions"]
+              if any(p.get("x-io-minted") for p in a["inputSchema"]["properties"].values())}
+    assert minted == {"create_flight"}
+
+
+def test_caps_validates_against_parity_schema():
+    schema = Path(os.environ.get("CAPS_SCHEMA", ""))
+    if not schema.is_file():
+        pytest.skip("parity caps.schema not available")
+    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema.Draft202012Validator(json.loads(schema.read_text())).validate(json.loads(json.dumps(lf.build_caps())))
 
 
 def test_tools_list_carries_annotations_and_minted():
@@ -32,7 +47,8 @@ def test_tools_list_carries_annotations_and_minted():
 
 def test_snapshots_match_code():
     for name, fn in (("caps.json", lf.build_caps), ("permission_manifest.json", lf.build_permission_manifest)):
-        assert json.loads((D / name).read_text()) == json.loads(json.dumps(fn())), name
+        strip = lambda d: {k: v for k, v in d.items() if k != "generatedAt"}  # noqa: E731
+        assert strip(json.loads((D / name).read_text())) == strip(json.loads(json.dumps(fn()))), name
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "emit_caps.py"), "--check"], capture_output=True)
     assert r.returncode == 0, r.stdout
 

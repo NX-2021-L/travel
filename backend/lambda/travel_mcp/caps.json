@@ -1,15 +1,13 @@
 {
   "actions": [
     {
-      "action": "search_flights",
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Search flight records with optional filters. Returns paginated summaries.",
-      "dry_run": false,
+      "dryRun": false,
       "inputSchema": {
         "properties": {
           "airline": {
@@ -63,23 +61,20 @@
         },
         "type": "object"
       },
+      "name": "search_flights",
+      "outputSchema": null,
       "requiresGovernanceHash": false,
-      "schemaHash": "1d989dbf7ccc76292c6b845df8b3c3d43659879b71585508a7a96273ff8fcb2b",
-      "schemaSource": "declared",
-      "surface": "io-travel",
       "title": "Search Flights",
-      "trust": "first-party"
+      "via": "top-level"
     },
     {
-      "action": "get_flight",
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Get full details of a single flight by its ID.",
-      "dry_run": false,
+      "dryRun": false,
       "inputSchema": {
         "properties": {
           "flight_id": {
@@ -92,23 +87,20 @@
         ],
         "type": "object"
       },
+      "name": "get_flight",
+      "outputSchema": null,
       "requiresGovernanceHash": false,
-      "schemaHash": "683487673a51aeff0aa1dcc3de9431da09f81475795f632060b53063c0e90cca",
-      "schemaSource": "declared",
-      "surface": "io-travel",
       "title": "Get Flight",
-      "trust": "first-party"
+      "via": "top-level"
     },
     {
-      "action": "create_flight",
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Create a new flight record. Requires date, origin, and destination airport codes. Generates a unique flight ID. Rejects duplicates.",
-      "dry_run": true,
+      "dryRun": true,
       "inputSchema": {
         "properties": {
           "airline": {
@@ -131,6 +123,11 @@
             "description": "Cost type (Air, Car, Airfare, Hotel)",
             "type": "string"
           },
+          "created_at": {
+            "description": "Server-minted; read-only, ignored if supplied",
+            "type": "string",
+            "x-io-minted": true
+          },
           "date": {
             "description": "Flight date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T08:30:00Z)",
             "type": "string"
@@ -150,6 +147,11 @@
           "extra_fees": {
             "description": "Extra fees amount",
             "type": "number"
+          },
+          "flight_id": {
+            "description": "Server-minted; read-only, ignored if supplied",
+            "type": "string",
+            "x-io-minted": true
           },
           "flight_number": {
             "description": "Flight number (e.g. AS123)",
@@ -195,27 +197,20 @@
         ],
         "type": "object"
       },
+      "name": "create_flight",
+      "outputSchema": null,
       "requiresGovernanceHash": false,
-      "schemaHash": "71aeee43b128aec0f0bea395f0c10caeb59298d583c51ef6fdf5dcf65b0811c5",
-      "schemaSource": "declared",
-      "surface": "io-travel",
       "title": "Create Flight",
-      "trust": "first-party",
-      "x-io-minted": [
-        "/result/flight_id",
-        "/result/created_at"
-      ]
+      "via": "top-level"
     },
     {
-      "action": "update_flight",
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Update mutable booking fields on a flight record. Immutable fields (date, origin, dest, status) cannot be changed.",
-      "dry_run": true,
+      "dryRun": true,
       "inputSchema": {
         "properties": {
           "base_fare": {
@@ -266,23 +261,20 @@
         ],
         "type": "object"
       },
+      "name": "update_flight",
+      "outputSchema": null,
       "requiresGovernanceHash": false,
-      "schemaHash": "235a27f02c0a6033e6df7d1f8852360284a9fe918e720dd2e44c0a6ac7569aa2",
-      "schemaSource": "declared",
-      "surface": "io-travel",
       "title": "Update Flight",
-      "trust": "first-party"
+      "via": "top-level"
     },
     {
-      "action": "cancel_flight",
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Cancel a flight reservation. Sets status to 'cancelled' with a timestamp. Idempotent \u2014 re-cancelling returns success. No hard deletes.",
-      "dry_run": true,
+      "dryRun": true,
       "inputSchema": {
         "properties": {
           "dry_run": {
@@ -303,14 +295,14 @@
         ],
         "type": "object"
       },
+      "name": "cancel_flight",
+      "outputSchema": null,
       "requiresGovernanceHash": false,
-      "schemaHash": "2c77c6e54c699ee5136d4b5c3588888bfc1e989314d95ad633ef8f439572ea8c",
-      "schemaSource": "declared",
-      "surface": "io-travel",
       "title": "Cancel Flight",
-      "trust": "first-party"
+      "via": "top-level"
     }
   ],
-  "surface": "io-travel",
-  "v": 1
+  "generatedAt": "2026-10-10T15:54:53Z",
+  "schemaVersion": "1.1.0",
+  "surface": "io-travel"
 }

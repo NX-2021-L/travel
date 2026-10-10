@@ -82,6 +82,6 @@ def test_dry_run_requires_write_authorisation(table):
 
 
 def test_caps_advertise_dry_run():
-    acts = {a["action"]: a for a in lf.build_caps()["actions"]}
-    assert all(acts[n]["dry_run"] and "dry_run" in acts[n]["inputSchema"]["properties"] for n in lf.WRITE_TOOLS)
-    assert not acts["get_flight"]["dry_run"] and not acts["search_flights"]["dry_run"]
+    acts = {a["name"]: a for a in lf.build_caps()["actions"]}
+    assert all(acts[n]["dryRun"] and "dry_run" in acts[n]["inputSchema"]["properties"] for n in lf.WRITE_TOOLS)
+    assert {n for n, a in acts.items() if a["dryRun"]} == set(lf.WRITE_TOOLS)

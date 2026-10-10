@@ -17,6 +17,10 @@ import lambda_function as lf  # noqa: E402
 DOCS = {"caps.json": lf.build_caps, "permission_manifest.json": lf.build_permission_manifest}
 
 
+def strip(doc):
+    return {k: v for k, v in doc.items() if k != "generatedAt"}
+
+
 def render(doc):
     return json.dumps(doc, indent=2, sort_keys=True) + "\n"
 
@@ -25,10 +29,11 @@ def main(argv):
     check = "--check" in argv
     bad = 0
     for name, fn in DOCS.items():
-        want = render(fn())
+        doc = fn()
+        want = render(doc)
         path = D / name
         if check:
-            if not path.exists() or path.read_text() != want:
+            if not path.exists() or strip(json.loads(path.read_text())) != strip(json.loads(want)):
                 print(f"DRIFT: {name}")
                 bad = 1
         else:
