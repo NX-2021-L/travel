@@ -533,6 +533,44 @@ def _error(code: str, message: str, status: int = 400, retryable: bool = False) 
     }))]
 
 
+
+# ---------------------------------------------------------------------------
+# dry_run -> ResolvedCall v1 (DVP-TSK-900, DOC-3724FD572867 s1.3 Contract B)
+# ---------------------------------------------------------------------------
+
+_CONTROL_ARGS = ("dry_run", "idempotency_key")
+
+
+def _split_control(args: dict) -> tuple:
+    """Return (business args, dry_run flag, idempotency key). Key may come from the Idempotency-Key header."""
+    clean = {k: v for k, v in args.items() if k not in _CONTROL_ARGS}
+    key = str(args.get("idempotency_key") or _IDEMPOTENCY_KEY.get() or "")
+    return clean, args.get("dry_run") is True, key
+
+
+def _resolved_call(action: str, args: dict, key: str, underlying: list, kinds: list,
+                   placeholders: Optional[list] = None, diff: Optional[list] = None,
+                   sentence: str = "", warnings: Optional[list] = None) -> list:
+    principal = _PRINCIPAL.get() or {}
+    schema = next((t.inputSchema for t in _tool_specs() if t.name == action), {})
+    call = {
+        "v": 1, "surface": "io-travel", "action": action, "arguments": args,
+        "schemaHash": _schema_hash(schema),
+        "principal": principal.get("id"),
+        "underlying": underlying,
+        "sideEffects": {"writeCount": 0 if not kinds else len(underlying), "kinds": kinds},
+        "sentence": sentence,
+        "placeholders": placeholders or [],
+        "annotations": dict(_ANNOTATIONS[action]),
+        "idempotencyKey": key,
+        "source": "server-dry-run",
+    }
+    if diff is not None:
+        call["diff"] = diff
+    if warnings:
+        call["warnings"] = warnings
+    return _success({"dry_run": True, "resolved_call": call})
+
 # ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
@@ -723,6 +761,7 @@ async def _get_flight(args: dict) -> list:
 
 async def _update_flight(args: dict) -> list:
     """Update mutable fields on a flight record."""
+    args, dry_run, idem_key = _split_control(args)
     flight_id = args.get("flight_id")
     if not flight_id:
         return _error("missing_param", "flight_id is required")
@@ -754,6 +793,16 @@ async def _update_flight(args: dict) -> list:
     if not existing.get("Item"):
         return _error("not_found", f"Flight {flight_id} not found", status=404)
 
+    if dry_run:
+        before = existing["Item"]
+        diff = [{"pointer": f"/{k}", "before": _decimal_to_native(before.get(k)), "after": v} for k, v in updates.items()]
+        return _resolved_call(
+            "update_flight", args, idem_key,
+            [{"handler": "dynamodb", "method": "UpdateItem", "path": f"{TABLE_NAME}/{flight_id}", "body": {"set": updates}}],
+            ["dynamodb:UpdateItem"], placeholders=[], diff=diff,
+            sentence=f"Update {len(updates)} field(s) on flight {flight_id}",
+        )
+
     # Build update expression
     expr_parts = ["#updated_at = :updated_at"]
     attr_names = {"#updated_at": "updated_at"}
@@ -783,6 +832,7 @@ async def _update_flight(args: dict) -> list:
 
 async def _cancel_flight(args: dict) -> list:
     """Cancel a flight (soft delete — sets status to 'cancelled')."""
+    args, dry_run, idem_key = _split_control(args)
     flight_id = args.get("flight_id")
     if not flight_id:
         return _error("missing_param", "flight_id is required")
@@ -797,7 +847,21 @@ async def _cancel_flight(args: dict) -> list:
 
     # Idempotent: already cancelled
     if item.get("status") == "cancelled":
+        if dry_run:
+            return _resolved_call("cancel_flight", args, idem_key, [], [],
+                                  sentence=f"Flight {flight_id} is already cancelled; no change",
+                                  warnings=["already cancelled"])
         return _success(item)
+
+    if dry_run:
+        return _resolved_call(
+            "cancel_flight", args, idem_key,
+            [{"handler": "dynamodb", "method": "UpdateItem", "path": f"{TABLE_NAME}/{flight_id}",
+              "body": {"set": {"status": "cancelled"}}}],
+            ["dynamodb:UpdateItem"],
+            diff=[{"pointer": "/status", "before": item.get("status"), "after": "cancelled"}],
+            sentence=f"Cancel flight {flight_id}",
+        )
 
     now = _now_iso()
     response = table.update_item(
@@ -821,6 +885,7 @@ async def _cancel_flight(args: dict) -> list:
 
 async def _create_flight(args: dict) -> list:
     """Create a new flight record."""
+    args, dry_run, idem_key = _split_control(args)
     # Enforce required fields
     date_str = args.get("date")
     origin = args.get("origin")
@@ -881,6 +946,19 @@ async def _create_flight(args: dict) -> list:
                 item[field] = str(val)
 
     table = _get_table()
+
+    if dry_run:
+        dup = table.get_item(Key={"flight_id": flight_id}, ConsistentRead=True).get("Item")
+        return _resolved_call(
+            "create_flight", args, idem_key,
+            [{"handler": "dynamodb", "method": "PutItem", "path": f"{TABLE_NAME}/{flight_id}",
+              "body": _decimal_to_native(item)}],
+            ["dynamodb:PutItem"],
+            placeholders=[{"pointer": "/result/flight_id", "label": "server-minted flight id"},
+                          {"pointer": "/result/created_at", "label": "server-minted timestamp"}],
+            sentence=f"Create flight {origin.upper()} to {dest.upper()} on {date_iso}",
+            warnings=["flight already exists; execute would be rejected as duplicate"] if dup else None,
+        )
 
     # Reject duplicates with ConditionExpression
     try:
@@ -1045,6 +1123,17 @@ def _tool_specs() -> list[Tool]:
         meta = {}
         if t.name in _X_IO_MINTED:
             meta["x-io-minted"] = list(_X_IO_MINTED[t.name])
+        if t.name in WRITE_TOOLS:
+            schema = json.loads(json.dumps(t.inputSchema))
+            schema["properties"]["dry_run"] = {
+                "type": "boolean",
+                "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            }
+            schema["properties"]["idempotency_key"] = {
+                "type": "string",
+                "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            }
+            t = t.model_copy(update={"inputSchema": schema})
         if t.name in _X_IO_MINTED:
             schema = json.loads(json.dumps(t.inputSchema))
             for ptr in _X_IO_MINTED[t.name]:
@@ -1060,7 +1149,7 @@ def _tool_specs() -> list[Tool]:
     return tools
 
 
-_DRY_RUN_TOOLS: tuple = ()  # tools whose server-side dry_run is implemented (DVP-TSK-900)
+_DRY_RUN_TOOLS: tuple = WRITE_TOOLS  # tools with server-side dry_run (DVP-TSK-900)
 
 
 def build_caps() -> Dict[str, Any]:
