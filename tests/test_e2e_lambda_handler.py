@@ -70,9 +70,10 @@ def token(priv, sub):
                        "iat": now, "exp": now + 600}, priv, algorithm="RS256", headers={"kid": KID})
 
 
-def rpc(bearer, name, arguments):
+def rpc(bearer, name, arguments, path="/mcp"):
     ev = {
-        "requestContext": {"http": {"method": "POST", "path": "/mcp"}},
+        "requestContext": {"http": {"method": "POST", "path": path}},
+        "rawPath": path,
         "headers": {"authorization": f"Bearer {bearer}", "content-type": "application/json",
                     "accept": "application/json, text/event-stream"},
         "body": json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -88,11 +89,13 @@ def payload(resp):
     return json.loads(result["content"][0]["text"])
 
 
+@pytest.mark.parametrize("path", ["/mcp", "/", "/default"])
 @pytest.mark.parametrize("who", ["machine", "owner"])
-def test_read_succeeds(env, who):
+def test_read_succeeds(env, who, path):
+    # "/" is where the claude.ai connector POSTs MCP (DVP-ISS-144); "/default" strips to "/".
     priv, table = env
     bearer = KEY if who == "machine" else token(priv, "owner-sub")
-    out = payload(rpc(bearer, "get_flight", {"flight_id": "abc"}))
+    out = payload(rpc(bearer, "get_flight", {"flight_id": "abc"}, path=path))
     assert out["success"] is True and out["result"]["flight_id"] == "abc"
 
 
@@ -151,3 +154,10 @@ def test_resolve_env_guard_refuses_empty_allow_list():
                        env={"CURRENT_ENV": json.dumps({"COGNITO_USER_POOL_ID": "p"}), "PATH": os.environ["PATH"]})
     assert r.returncode == 3 and r.stdout == b""
     assert resolve_env.guard(resolve_env.resolve({}, {})) == ""
+
+
+def test_root_path_without_auth_is_rejected(env):
+    ev = {"requestContext": {"http": {"method": "POST", "path": "/"}}, "rawPath": "/",
+          "headers": {"content-type": "application/json"},
+          "body": json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}), "isBase64Encoded": False}
+    assert lf.lambda_handler(ev, None)["statusCode"] == 401
