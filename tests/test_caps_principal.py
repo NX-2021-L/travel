@@ -47,20 +47,49 @@ def _call(principal, tool, args=None):
         lf._PRINCIPAL.reset(tok)
 
 
-def test_policy_ungrouped_write_refused_read_allowed(monkeypatch):
-    human = lf._principal_from_claims({"sub": "s1", "email": "io@example.com"})
-    assert lf._authorize(human, "get_flight") is None
-    assert lf._authorize(human, "create_flight")
-    out = _call(human, "cancel_flight", {"flight_id": "x"})
-    assert out["error_envelope"]["code"] == "forbidden"
+def test_allow_listed_sub_reads_and_writes(monkeypatch):
+    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["s1"])
+    monkeypatch.setattr(lf, "TRAVEL_WRITE_GROUPS", [])
+    p = lf._principal_from_claims({"sub": "s1", "email": "io@example.com"})
+    assert lf._authorize(p, "get_flight") is None
+    assert lf._authorize(p, "create_flight") is None
 
 
-def test_policy_grouped_and_internal_write_allowed():
-    grouped = lf._principal_from_claims({"sub": "s1", "cognito:groups": ["io-travel-writers"]})
-    assert lf._authorize(grouped, "update_flight") is None
+def test_non_listed_pool_user_denied_read_and_write(monkeypatch):
+    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["s1"])
+    p = lf._principal_from_claims({"sub": "coach9", "cognito:groups": ["io-travel-writers"]})
+    assert lf._authorize(p, "get_flight") and lf._authorize(p, "cancel_flight")
+    assert _call(p, "get_flight", {"flight_id": "x"})["error_envelope"]["code"] == "forbidden"
+    assert _call(p, "cancel_flight", {"flight_id": "x"})["error_envelope"]["code"] == "forbidden"
+
+
+def test_unset_allow_list_denies_cognito(monkeypatch):
+    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", [])
+    p = lf._principal_from_claims({"sub": "s1"})
+    assert lf._authorize(p, "get_flight") and lf._authorize(p, "create_flight")
+
+
+def test_write_groups_extra_requirement(monkeypatch):
+    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["s1"])
+    monkeypatch.setattr(lf, "TRAVEL_WRITE_GROUPS", ["w"])
+    assert lf._authorize(lf._principal_from_claims({"sub": "s1"}), "get_flight") is None
+    assert lf._authorize(lf._principal_from_claims({"sub": "s1"}), "create_flight")
+    assert lf._authorize(lf._principal_from_claims({"sub": "s1", "cognito:groups": ["w"]}), "create_flight") is None
     assert lf._authorize(dict(lf.INTERNAL_PRINCIPAL), "create_flight") is None
-    # no principal => refused
     assert lf._authorize(None, "get_flight")
+
+
+def test_http_403_for_non_listed_cognito(monkeypatch):
+    monkeypatch.setattr(lf, "MCP_API_KEY", "secretkey")
+    monkeypatch.setattr(lf, "COGNITO_USER_POOL_ID", "us-east-1_x")
+    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["s1"])
+    monkeypatch.setattr(lf, "_verify_cognito_jwt", lambda t: {"sub": "coach9"})
+    for path in ("/mcp", "/caps.json"):
+        ev = {"requestContext": {"http": {"method": "GET", "path": path}}, "headers": {"authorization": "Bearer jwt"}}
+        assert asyncio.run(lf._handle_lambda_event(ev))["statusCode"] == 403
+    monkeypatch.setattr(lf, "_verify_cognito_jwt", lambda t: {"sub": "s1"})
+    ev = {"requestContext": {"http": {"method": "GET", "path": "/caps.json"}}, "headers": {"authorization": "Bearer jwt"}}
+    assert asyncio.run(lf._handle_lambda_event(ev))["statusCode"] == 200
 
 
 def test_authenticate_internal_key_and_cognito(monkeypatch):
