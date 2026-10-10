@@ -108,7 +108,7 @@
         "readOnlyHint": false
       },
       "description": "Create a new flight record. Requires date, origin, and destination airport codes. Generates a unique flight ID. Rejects duplicates.",
-      "dry_run": false,
+      "dry_run": true,
       "inputSchema": {
         "properties": {
           "airline": {
@@ -139,6 +139,10 @@
             "description": "Destination airport code (e.g. SFO)",
             "type": "string"
           },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
           "eqm_miles": {
             "description": "Elite qualifying miles",
             "type": "number"
@@ -153,6 +157,10 @@
           },
           "funding_source": {
             "description": "Payment source (e.g. AMEX 0308)",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
             "type": "string"
           },
           "international": {
@@ -188,7 +196,7 @@
         "type": "object"
       },
       "requiresGovernanceHash": false,
-      "schemaHash": "ef48068a88023b67b5f3cac20d3929e8666e2214d0d71928702b524d64339eca",
+      "schemaHash": "71aeee43b128aec0f0bea395f0c10caeb59298d583c51ef6fdf5dcf65b0811c5",
       "schemaSource": "declared",
       "surface": "io-travel",
       "title": "Create Flight",
@@ -207,7 +215,7 @@
         "readOnlyHint": false
       },
       "description": "Update mutable booking fields on a flight record. Immutable fields (date, origin, dest, status) cannot be changed.",
-      "dry_run": false,
+      "dry_run": true,
       "inputSchema": {
         "properties": {
           "base_fare": {
@@ -222,6 +230,10 @@
           "cost_type": {
             "type": "string"
           },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
           "extra_fees": {
             "type": "number"
           },
@@ -233,6 +245,10 @@
             "type": "string"
           },
           "funding_source": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
             "type": "string"
           },
           "total_paid": {
@@ -251,7 +267,7 @@
         "type": "object"
       },
       "requiresGovernanceHash": false,
-      "schemaHash": "2720ee9d7ca622e6e8bf73190351f0217cf3b8503f792c763f834297ce088f27",
+      "schemaHash": "235a27f02c0a6033e6df7d1f8852360284a9fe918e720dd2e44c0a6ac7569aa2",
       "schemaSource": "declared",
       "surface": "io-travel",
       "title": "Update Flight",
@@ -266,11 +282,19 @@
         "readOnlyHint": false
       },
       "description": "Cancel a flight reservation. Sets status to 'cancelled' with a timestamp. Idempotent \u2014 re-cancelling returns success. No hard deletes.",
-      "dry_run": false,
+      "dry_run": true,
       "inputSchema": {
         "properties": {
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
           "flight_id": {
             "description": "The flight record ID to cancel",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
             "type": "string"
           }
         },
@@ -280,7 +304,7 @@
         "type": "object"
       },
       "requiresGovernanceHash": false,
-      "schemaHash": "4d911cd8d7df68eaf6911c5a19e2a8748bed7f4d82ad1a366f6eb04a84132b82",
+      "schemaHash": "2c77c6e54c699ee5136d4b5c3588888bfc1e989314d95ad633ef8f439572ea8c",
       "schemaSource": "declared",
       "surface": "io-travel",
       "title": "Cancel Flight",
