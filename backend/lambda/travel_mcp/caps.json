@@ -1,0 +1,284 @@
+{
+  "actions": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "airline": {
+            "description": "Airline name (Alaska, Partner)",
+            "type": "string"
+          },
+          "booked_class": {
+            "description": "Booking class (First, Economy, K, D, Business)",
+            "type": "string"
+          },
+          "cost_type": {
+            "description": "Cost type (Air, Car, Airfare, Hotel)",
+            "type": "string"
+          },
+          "date_from": {
+            "description": "Start date (ISO 8601, e.g. 2025-01-01)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (ISO 8601); a date-only value includes that whole day",
+            "type": "string"
+          },
+          "dest": {
+            "description": "Destination airport code (e.g. SFO)",
+            "type": "string"
+          },
+          "international": {
+            "description": "International flight filter",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Max results (1-50, default 50)",
+            "type": "integer"
+          },
+          "next_token": {
+            "description": "Pagination cursor from previous response; absent means no more results",
+            "type": "string"
+          },
+          "origin": {
+            "description": "Origin airport code (e.g. SEA)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Flight status (active, cancelled)",
+            "type": "string"
+          },
+          "trip_city": {
+            "description": "Trip city name",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "search_flights",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Search Flights",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "flight_id": {
+            "description": "The flight record ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_flight",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Get Flight",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "airline": {
+            "description": "Airline name (e.g. Alaska)",
+            "type": "string"
+          },
+          "base_fare": {
+            "description": "Base fare amount",
+            "type": "number"
+          },
+          "booked_class": {
+            "description": "Booking class (First, Economy, Business, etc.)",
+            "type": "string"
+          },
+          "confirmation_code": {
+            "description": "Booking confirmation code",
+            "type": "string"
+          },
+          "cost_type": {
+            "description": "Cost type (Air, Car, Airfare, Hotel)",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "Server-minted; read-only, ignored if supplied",
+            "type": "string",
+            "x-io-minted": true
+          },
+          "date": {
+            "description": "Flight date (ISO 8601, e.g. 2025-06-15 or 2025-06-15T08:30:00Z)",
+            "type": "string"
+          },
+          "dest": {
+            "description": "Destination airport code (e.g. SFO)",
+            "type": "string"
+          },
+          "eqm_miles": {
+            "description": "Elite qualifying miles",
+            "type": "number"
+          },
+          "extra_fees": {
+            "description": "Extra fees amount",
+            "type": "number"
+          },
+          "flight_id": {
+            "description": "Server-minted; read-only, ignored if supplied",
+            "type": "string",
+            "x-io-minted": true
+          },
+          "flight_number": {
+            "description": "Flight number (e.g. AS123)",
+            "type": "string"
+          },
+          "funding_source": {
+            "description": "Payment source (e.g. AMEX 0308)",
+            "type": "string"
+          },
+          "international": {
+            "description": "International flight flag",
+            "type": "boolean"
+          },
+          "origin": {
+            "description": "Origin airport code (e.g. SEA)",
+            "type": "string"
+          },
+          "sequence": {
+            "description": "Trip leg sequence number",
+            "type": "number"
+          },
+          "total_paid": {
+            "description": "Total paid amount",
+            "type": "number"
+          },
+          "trip_city": {
+            "description": "Trip city name",
+            "type": "string"
+          },
+          "website": {
+            "description": "Booking website",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "origin",
+          "dest"
+        ],
+        "type": "object"
+      },
+      "name": "create_flight",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Create Flight",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "base_fare": {
+            "type": "number"
+          },
+          "booked_class": {
+            "type": "string"
+          },
+          "confirmation_code": {
+            "type": "string"
+          },
+          "cost_type": {
+            "type": "string"
+          },
+          "extra_fees": {
+            "type": "number"
+          },
+          "flight_id": {
+            "description": "The flight record ID to update",
+            "type": "string"
+          },
+          "flight_number": {
+            "type": "string"
+          },
+          "funding_source": {
+            "type": "string"
+          },
+          "total_paid": {
+            "type": "number"
+          },
+          "trip_city": {
+            "type": "string"
+          },
+          "website": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_flight",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Update Flight",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "flight_id": {
+            "description": "The flight record ID to cancel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_id"
+        ],
+        "type": "object"
+      },
+      "name": "cancel_flight",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Cancel Flight",
+      "via": "top-level"
+    }
+  ],
+  "generatedAt": "2026-10-10T15:54:10Z",
+  "schemaVersion": "1.1.0",
+  "surface": "io-travel"
+}

@@ -1,0 +1,36 @@
+{
+  "principals": {
+    "cognito": {
+      "allow_list_env": "COGNITO_ALLOWED_SUBS",
+      "applies_to": [
+        "read",
+        "write"
+      ],
+      "default": "deny",
+      "write_groups": [],
+      "write_groups_env": "TRAVEL_WRITE_GROUPS"
+    },
+    "internal-key": {
+      "access": "all"
+    }
+  },
+  "surface": "io-travel",
+  "tools": {
+    "cancel_flight": {
+      "access": "write"
+    },
+    "create_flight": {
+      "access": "write"
+    },
+    "get_flight": {
+      "access": "read"
+    },
+    "search_flights": {
+      "access": "read"
+    },
+    "update_flight": {
+      "access": "write"
+    }
+  },
+  "v": 1
+}
