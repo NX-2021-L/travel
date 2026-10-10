@@ -1291,7 +1291,10 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
         return _handle_register(event)
 
     # MCP routes require authentication
-    if path == "/mcp" or path.startswith("/mcp/") or path in ("/caps.json", "/permission-manifest.json"):
+    # Every route below the OAuth/well-known ones is an MCP or caps route and needs auth.
+    # The claude.ai connector POSTs MCP to "/" (and "/default" strips to "/"), so gating
+    # only /mcp left the tool layer without a principal (DVP-ISS-144).
+    if True:
         principal, auth_err = _authenticate(event)
         if not auth_err and not principal.get("allowed"):
             return {
