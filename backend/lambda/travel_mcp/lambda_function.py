@@ -56,10 +56,16 @@ MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 
 SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "")
 
-# Cognito groups allowed to call write tools (DVP-TSK-889 policy table).
-# A valid but ungrouped human token is read-only.
+# Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
+# holds other users, so pool membership grants nothing. Only subs in this
+# allow-list may use the Cognito path (reads and writes); empty/unset = denied.
+COGNITO_ALLOWED_SUBS = [
+    x.strip() for x in os.environ.get("COGNITO_ALLOWED_SUBS", "").split(",") if x.strip()
+]
+# Optional additional write requirement: a Cognito group. Empty (default) means
+# allow-listed subs may write.
 TRAVEL_WRITE_GROUPS = [
-    g.strip() for g in os.environ.get("TRAVEL_WRITE_GROUPS", "io-travel-writers,io-admin").split(",") if g.strip()
+    g.strip() for g in os.environ.get("TRAVEL_WRITE_GROUPS", "").split(",") if g.strip()
 ]
 
 logger = logging.getLogger("travel-mcp")
@@ -180,10 +186,11 @@ def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
         "id": str(claims.get("email") or claims.get("username") or claims.get("sub") or "unknown"),
         "sub": str(claims.get("sub") or ""),
         "groups": [str(g) for g in groups],
+        "allowed": bool(claims.get("sub")) and str(claims.get("sub")) in COGNITO_ALLOWED_SUBS,
     }
 
 
-INTERNAL_PRINCIPAL = {"kind": "internal-key", "id": "internal-key", "sub": "", "groups": []}
+INTERNAL_PRINCIPAL = {"kind": "internal-key", "id": "internal-key", "sub": "", "groups": [], "allowed": True}
 
 
 def _authenticate(event: Dict[str, Any]) -> tuple:
@@ -1053,7 +1060,13 @@ def build_permission_manifest() -> Dict[str, Any]:
         "surface": "io-travel",
         "principals": {
             "internal-key": {"access": "all"},
-            "cognito": {"read": "any valid token", "write_groups": list(TRAVEL_WRITE_GROUPS)},
+            "cognito": {
+                "default": "deny",
+                "allow_list_env": "COGNITO_ALLOWED_SUBS",
+                "applies_to": ["read", "write"],
+                "write_groups_env": "TRAVEL_WRITE_GROUPS",
+                "write_groups": list(TRAVEL_WRITE_GROUPS),
+            },
         },
         "tools": {name: dict(rule) for name, rule in POLICY_TABLE.items()},
     }
@@ -1064,11 +1077,15 @@ def _authorize(principal: Optional[Dict[str, Any]], tool: str) -> Optional[str]:
     rule = POLICY_TABLE.get(tool)
     if rule is None or principal is None:
         return "No principal or unknown tool"
-    if rule["access"] == "read" or principal.get("kind") == "internal-key":
+    if principal.get("kind") == "internal-key":
         return None
-    if set(principal.get("groups") or []) & set(TRAVEL_WRITE_GROUPS):
-        return None
-    return f"{tool} requires membership of one of: {', '.join(TRAVEL_WRITE_GROUPS)}"
+    if not principal.get("allowed"):
+        return "principal is not in the COGNITO_ALLOWED_SUBS allow-list"
+    if rule["access"] == "write" and TRAVEL_WRITE_GROUPS and not (
+        set(principal.get("groups") or []) & set(TRAVEL_WRITE_GROUPS)
+    ):
+        return f"{tool} requires membership of one of: {', '.join(TRAVEL_WRITE_GROUPS)}"
+    return None
 
 
 @app.list_tools()
@@ -1153,6 +1170,13 @@ async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
     # MCP routes require authentication
     if path == "/mcp" or path.startswith("/mcp/") or path in ("/caps.json", "/permission-manifest.json"):
         principal, auth_err = _authenticate(event)
+        if not auth_err and not principal.get("allowed"):
+            return {
+                "statusCode": 403,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps({"error": "forbidden", "error_description": "principal is not in the allow-list"}),
+                "isBase64Encoded": False,
+            }
         if not auth_err:
             _PRINCIPAL.set(principal)
             _hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}

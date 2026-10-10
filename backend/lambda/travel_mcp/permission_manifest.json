@@ -1,11 +1,14 @@
 {
   "principals": {
     "cognito": {
-      "read": "any valid token",
-      "write_groups": [
-        "io-travel-writers",
-        "io-admin"
-      ]
+      "allow_list_env": "COGNITO_ALLOWED_SUBS",
+      "applies_to": [
+        "read",
+        "write"
+      ],
+      "default": "deny",
+      "write_groups": [],
+      "write_groups_env": "TRAVEL_WRITE_GROUPS"
     },
     "internal-key": {
       "access": "all"
