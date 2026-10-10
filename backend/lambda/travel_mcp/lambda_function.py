@@ -61,6 +61,26 @@ SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "")
 COGNITO_ALLOWED_SUBS = [
     x.strip() for x in os.environ.get("COGNITO_ALLOWED_SUBS", "").split(",") if x.strip()
 ]
+
+# io-graph pool (think.thepup.io principal, DVP-TSK-903). Disabled when
+# IOGRAPH_POOL_ID is unset.  Own client binding and own owner allow-list.
+def _csv_env(name: str) -> List[str]:
+    return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
+
+
+def _iograph_pool_id() -> str:
+    return os.environ.get("IOGRAPH_POOL_ID", "").strip()
+
+
+def _iograph_region() -> str:
+    return os.environ.get("IOGRAPH_REGION", "").strip() or _iograph_pool_id().split("_")[0]
+
+
+def _cors_origins() -> List[str]:
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS")
+    return _csv_env("CORS_ALLOWED_ORIGINS") if raw is not None else ["https://think.thepup.io"]
+
+
 # Optional additional write requirement: a Cognito group. Empty (default) means
 # allow-listed subs may write.
 TRAVEL_WRITE_GROUPS = [
@@ -96,19 +116,30 @@ _cognito_jwks_fetched_at: float = 0.0
 _COGNITO_JWKS_TTL = 3600  # 1 hour
 
 
-def _get_cognito_jwks() -> Dict[str, Any]:
-    global _cognito_jwks_cache, _cognito_jwks_fetched_at
-    now = time.time()
-    if _cognito_jwks_cache and (now - _cognito_jwks_fetched_at) < _COGNITO_JWKS_TTL:
-        return _cognito_jwks_cache
+_iograph_jwks_cache: Dict[str, Any] = {}
+_iograph_jwks_fetched_at: float = 0.0
 
-    if not COGNITO_USER_POOL_ID:
+
+def _get_cognito_jwks(pool: str = "enceladus") -> Dict[str, Any]:
+    global _cognito_jwks_cache, _cognito_jwks_fetched_at
+    global _iograph_jwks_cache, _iograph_jwks_fetched_at
+    now = time.time()
+    if pool == "iograph":
+        cache, fetched_at = _iograph_jwks_cache, _iograph_jwks_fetched_at
+        pool_id, region = _iograph_pool_id(), _iograph_region()
+    else:
+        cache, fetched_at = _cognito_jwks_cache, _cognito_jwks_fetched_at
+        pool_id = COGNITO_USER_POOL_ID
+        region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_")[0]
+    if cache and (now - fetched_at) < _COGNITO_JWKS_TTL:
+        return cache
+
+    if not pool_id:
         raise ValueError("COGNITO_USER_POOL_ID not set")
 
-    region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_")[0]
     url = (
         f"https://cognito-idp.{region}.amazonaws.com/"
-        f"{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
+        f"{pool_id}/.well-known/jwks.json"
     )
 
     import jwt as _jwt_mod
@@ -129,6 +160,9 @@ def _get_cognito_jwks() -> Dict[str, Any]:
         if kid:
             new_cache[kid] = _RSA.from_jwk(json.dumps(key_data))
 
+    if pool == "iograph":
+        _iograph_jwks_cache, _iograph_jwks_fetched_at = new_cache, now
+        return _iograph_jwks_cache
     _cognito_jwks_cache = new_cache
     _cognito_jwks_fetched_at = now
     return _cognito_jwks_cache
@@ -143,12 +177,26 @@ def _verify_cognito_jwt(token: str) -> Dict[str, Any]:
     if alg != "RS256":
         raise ValueError(f"Unexpected token algorithm: {alg}")
 
-    key = _get_cognito_jwks().get(kid)
+    # Pick the pool from the unverified iss; the signature and iss are then
+    # verified against THAT pool, with that pool's client binding.
+    unverified_iss = str(_jwt_mod.decode(token, options={"verify_signature": False}).get("iss") or "")
+    enc_region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_", 1)[0]
+    enc_iss = f"https://cognito-idp.{enc_region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
+    if COGNITO_USER_POOL_ID and unverified_iss == enc_iss:
+        pool, expected_issuer, client_ids = "enceladus", enc_iss, [COGNITO_CLIENT_ID]
+    elif _iograph_pool_id() and unverified_iss == (
+        f"https://cognito-idp.{_iograph_region()}.amazonaws.com/{_iograph_pool_id()}"
+    ):
+        pool, expected_issuer = "iograph", unverified_iss
+        client_ids = _csv_env("IOGRAPH_CLIENT_IDS")
+        if not client_ids:
+            raise ValueError("io-graph client binding not configured")
+    else:
+        raise ValueError("Token issuer not accepted")
+
+    key = _get_cognito_jwks(pool).get(kid)
     if key is None:
         raise ValueError("Token key ID not found in JWKS")
-
-    region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_", 1)[0]
-    expected_issuer = f"https://cognito-idp.{region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
 
     claims = _jwt_mod.decode(
         token,
@@ -158,17 +206,25 @@ def _verify_cognito_jwt(token: str) -> Dict[str, Any]:
         options={"verify_exp": True, "verify_aud": False},
     )
 
-    if COGNITO_CLIENT_ID:
+    if any(client_ids):
         token_use = str(claims.get("token_use") or "").strip().lower()
         if token_use == "access":
-            cid = str(claims.get("client_id") or "")
-            if not hmac.compare_digest(cid, COGNITO_CLIENT_ID):
-                raise ValueError("Token client_id mismatch")
+            value = str(claims.get("client_id") or "")
         elif token_use == "id":
-            aud = str(claims.get("aud") or "")
-            if not hmac.compare_digest(aud, COGNITO_CLIENT_ID):
-                raise ValueError("Token audience mismatch")
+            value = str(claims.get("aud") or "")
+        else:
+            value = None
+        if value is not None:
+            matched = False
+            for cid in client_ids:
+                if cid and hmac.compare_digest(value, cid):
+                    matched = True
+            if not matched:
+                raise ValueError("Token client binding mismatch")
+        elif pool == "iograph":
+            raise ValueError("Token use not accepted")
 
+    claims["_pool"] = pool
     return claims
 
 
@@ -211,7 +267,10 @@ def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
         "id": str(claims.get("email") or claims.get("username") or claims.get("sub") or "unknown"),
         "sub": str(claims.get("sub") or ""),
         "groups": [str(g) for g in groups],
-        "allowed": bool(claims.get("sub")) and str(claims.get("sub")) in COGNITO_ALLOWED_SUBS,
+        "allowed": bool(claims.get("sub")) and str(claims.get("sub")) in (
+            _csv_env("IOGRAPH_ALLOWED_SUBS") if claims.get("_pool") == "iograph" else COGNITO_ALLOWED_SUBS
+        ),
+        "pool": claims.get("_pool", "enceladus"),
     }
 
 
@@ -1276,6 +1335,9 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     if not path:
         path = "/"
 
+    if method == "OPTIONS":  # CORS preflight, no auth (DVP-TSK-903)
+        return {"statusCode": 204, "headers": {}, "body": "", "isBase64Encoded": False}
+
     # OAuth / well-known routes (no auth required)
     if path == "/.well-known/oauth-authorization-server" and method == "GET":
         return _handle_oauth_metadata(event)
@@ -1389,4 +1451,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "body": json.dumps({"error": "Requires MCP_TRANSPORT=streamable_http"}),
             "isBase64Encoded": False,
         }
-    return asyncio.run(_handle_lambda_event(event))
+    return _with_cors(event, asyncio.run(_handle_lambda_event(event)))
+
+
+def _with_cors(event: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Echo ACAO only for allow-listed browser origins (default https://think.thepup.io)."""
+    origin = ({k.lower(): v for k, v in (event.get("headers") or {}).items()}).get("origin", "")
+    if origin and origin in _cors_origins() and isinstance(resp, dict):
+        hdrs = dict(resp.get("headers") or {})
+        hdrs.update({
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Idempotency-Key",
+            "Access-Control-Expose-Headers": "Mcp-Session-Id",
+            "Vary": "Origin",
+        })
+        resp = {**resp, "headers": hdrs}
+    return resp
