@@ -13,7 +13,6 @@ Data: DynamoDB table io-travel-flights with 3 GSIs
 
 import asyncio
 import base64 as b64
-import contextvars
 import hashlib
 import hmac
 import json
@@ -173,8 +172,34 @@ def _verify_cognito_jwt(token: str) -> Dict[str, Any]:
     return claims
 
 
-_PRINCIPAL: contextvars.ContextVar = contextvars.ContextVar("travel_principal", default=None)
-_IDEMPOTENCY_KEY: contextvars.ContextVar = contextvars.ContextVar("travel_idempotency_key", default="")
+class _RequestHolder:
+    """Per-invocation request state (principal, idempotency key).
+
+    A ContextVar is NOT safe here: the MCP session manager runs tool handlers in
+    tasks whose context was copied before the request principal was set, so the
+    handler saw None (travel incident 2026-10-10, E2-R12).  A Lambda container
+    serves one request at a time, so a module-level holder that
+    _handle_lambda_event resets in a finally block is correct.  The ContextVar
+    get/set/reset API is kept.
+    """
+
+    def __init__(self, default=None):
+        self._default = default
+        self._value = default
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        old, self._value = self._value, value
+        return old
+
+    def reset(self, token=None):
+        self._value = self._default if token is None else token
+
+
+_PRINCIPAL = _RequestHolder(None)
+_IDEMPOTENCY_KEY = _RequestHolder("")
 
 
 def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
@@ -1144,6 +1169,14 @@ def _json_response(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return await _handle_lambda_event_inner(event)
+    finally:
+        _PRINCIPAL.reset()
+        _IDEMPOTENCY_KEY.reset()
+
+
+async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     req_ctx = event.get("requestContext", {}).get("http", {})
     method = req_ctx.get("method", event.get("httpMethod", "POST")).upper()
     path = req_ctx.get("path", event.get("rawPath", "/"))
@@ -1169,7 +1202,10 @@ async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return _handle_register(event)
 
     # MCP routes require authentication
-    if path == "/mcp" or path.startswith("/mcp/") or path in ("/caps.json", "/permission-manifest.json"):
+    # Every route below the OAuth/well-known ones is an MCP or caps route and needs auth.
+    # The claude.ai connector POSTs MCP to "/" (and "/default" strips to "/"), so gating
+    # only /mcp left the tool layer without a principal (DVP-ISS-144).
+    if True:
         principal, auth_err = _authenticate(event)
         if not auth_err and not principal.get("allowed"):
             return {
