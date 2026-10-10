@@ -1,6 +1,6 @@
 """io-travel MCP Server — Agent-accessible flight data management.
 
-Exposes 4 tools via MCP streamable HTTP transport:
+Exposes 5 tools via MCP streamable HTTP transport:
   - search_flights: filter and paginate flight records
   - get_flight: retrieve a single flight by ID
   - update_flight: modify mutable booking fields
@@ -13,6 +13,7 @@ Data: DynamoDB table io-travel-flights with 3 GSIs
 
 import asyncio
 import base64 as b64
+import contextvars
 import hashlib
 import hmac
 import json
@@ -33,7 +34,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import TextContent, Tool, ToolAnnotations
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -54,6 +55,12 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 
 SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "")
+
+# Cognito groups allowed to call write tools (DVP-TSK-889 policy table).
+# A valid but ungrouped human token is read-only.
+TRAVEL_WRITE_GROUPS = [
+    g.strip() for g in os.environ.get("TRAVEL_WRITE_GROUPS", "io-travel-writers,io-admin").split(",") if g.strip()
+]
 
 logger = logging.getLogger("travel-mcp")
 
@@ -160,31 +167,54 @@ def _verify_cognito_jwt(token: str) -> Dict[str, Any]:
     return claims
 
 
-def _authenticate_request(event: Dict[str, Any]) -> Optional[str]:
-    """Validate bearer token. Returns None on success, error message on failure."""
+_PRINCIPAL: contextvars.ContextVar = contextvars.ContextVar("travel_principal", default=None)
+_IDEMPOTENCY_KEY: contextvars.ContextVar = contextvars.ContextVar("travel_idempotency_key", default="")
+
+
+def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
+    groups = claims.get("cognito:groups") or []
+    if isinstance(groups, str):
+        groups = [groups]
+    return {
+        "kind": "cognito",
+        "id": str(claims.get("email") or claims.get("username") or claims.get("sub") or "unknown"),
+        "sub": str(claims.get("sub") or ""),
+        "groups": [str(g) for g in groups],
+    }
+
+
+INTERNAL_PRINCIPAL = {"kind": "internal-key", "id": "internal-key", "sub": "", "groups": []}
+
+
+def _authenticate(event: Dict[str, Any]) -> tuple:
+    """Validate bearer token. Returns (principal, None) or (None, error message)."""
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     auth = headers.get("authorization", "")
 
     if not auth.startswith("Bearer "):
-        return "Missing or invalid Authorization header"
+        return None, "Missing or invalid Authorization header"
 
     token = auth[7:].strip()
     if not token:
-        return "Empty bearer token"
+        return None, "Empty bearer token"
 
-    # Static API key check
+    # Static API key check (internal key: full access)
     if MCP_API_KEY and hmac.compare_digest(token, MCP_API_KEY):
-        return None
+        return dict(INTERNAL_PRINCIPAL), None
 
-    # Cognito JWT check
+    # Cognito JWT check (human principal; access governed by POLICY_TABLE)
     if COGNITO_USER_POOL_ID:
         try:
-            _verify_cognito_jwt(token)
-            return None
+            return _principal_from_claims(_verify_cognito_jwt(token)), None
         except Exception as exc:
-            return f"JWT validation failed: {exc}"
+            return None, f"JWT validation failed: {exc}"
 
-    return "No authentication method configured"
+    return None, "No authentication method configured"
+
+
+def _authenticate_request(event: Dict[str, Any]) -> Optional[str]:
+    """Validate bearer token. Returns None on success, error message on failure."""
+    return _authenticate(event)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -851,8 +881,7 @@ _TOOL_HANDLERS = {
 }
 
 
-@app.list_tools()
-async def list_tools() -> list[Tool]:
+def _base_tools() -> list[Tool]:
     return [
         Tool(
             name="search_flights",
@@ -948,11 +977,121 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Capabilities (caps.json), annotations, x-io-minted, policy table (DVP-TSK-889)
+# ---------------------------------------------------------------------------
+
+WRITE_TOOLS = ("create_flight", "update_flight", "cancel_flight")
+
+_ANNOTATIONS = {
+    "search_flights": dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    "get_flight": dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    "create_flight": dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
+    "update_flight": dict(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    "cancel_flight": dict(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False),
+}
+
+# JSON Pointers into the tool result (the {"success","result"} envelope) minted server-side.
+_X_IO_MINTED = {"create_flight": ["/result/flight_id", "/result/created_at"]}
+
+# Per-tool authorisation: read tools need any valid principal, write tools need
+# the internal key or a Cognito group in TRAVEL_WRITE_GROUPS.
+POLICY_TABLE = {
+    name: {"access": "write" if name in WRITE_TOOLS else "read"} for name in _ANNOTATIONS
+}
+
+
+def _schema_hash(schema: Dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _tool_specs() -> list[Tool]:
+    tools = []
+    for t in _base_tools():
+        meta = {}
+        if t.name in _X_IO_MINTED:
+            meta["x-io-minted"] = list(_X_IO_MINTED[t.name])
+        tools.append(t.model_copy(update={
+            "annotations": ToolAnnotations(**_ANNOTATIONS[t.name]),
+            "meta": meta or None,
+        }))
+    return tools
+
+
+def build_caps() -> Dict[str, Any]:
+    """The io-travel capabilities document (ActionContract list, DOC-3724FD572867 s1.1)."""
+    actions = []
+    for t in _tool_specs():
+        schema = t.inputSchema
+        entry = {
+            "surface": "io-travel",
+            "action": t.name,
+            "title": t.name.replace("_", " ").title(),
+            "description": t.description,
+            "inputSchema": schema,
+            "annotations": dict(_ANNOTATIONS[t.name]),
+            "schemaSource": "declared",
+            "schemaHash": _schema_hash(schema),
+            "requiresGovernanceHash": False,
+            "trust": "first-party",
+            "dry_run": t.name in WRITE_TOOLS and _DRY_RUN_ENABLED,
+        }
+        if t.name in _X_IO_MINTED:
+            entry["x-io-minted"] = list(_X_IO_MINTED[t.name])
+        actions.append(entry)
+    return {"v": 1, "surface": "io-travel", "actions": actions}
+
+
+_DRY_RUN_ENABLED = False
+
+
+def build_permission_manifest() -> Dict[str, Any]:
+    return {
+        "v": 1,
+        "surface": "io-travel",
+        "principals": {
+            "internal-key": {"access": "all"},
+            "cognito": {"read": "any valid token", "write_groups": list(TRAVEL_WRITE_GROUPS)},
+        },
+        "tools": {name: dict(rule) for name, rule in POLICY_TABLE.items()},
+    }
+
+
+def _authorize(principal: Optional[Dict[str, Any]], tool: str) -> Optional[str]:
+    """Return None if allowed, else a refusal message."""
+    rule = POLICY_TABLE.get(tool)
+    if rule is None or principal is None:
+        return "No principal or unknown tool"
+    if rule["access"] == "read" or principal.get("kind") == "internal-key":
+        return None
+    if set(principal.get("groups") or []) & set(TRAVEL_WRITE_GROUPS):
+        return None
+    return f"{tool} requires membership of one of: {', '.join(TRAVEL_WRITE_GROUPS)}"
+
+
+@app.list_tools()
+async def list_tools() -> list[Tool]:
+    return _tool_specs()
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
         return _error("unknown_tool", f"Unknown tool: {name}")
+    principal = _PRINCIPAL.get()
+    denied = _authorize(principal, name)
+    audit = {
+        "audit": "travel_tool_call", "tool": name,
+        "principal": (principal or {}).get("id"), "principal_kind": (principal or {}).get("kind"),
+        "idempotency_key": _IDEMPOTENCY_KEY.get() or None,
+        "allowed": denied is None, "ts": _now_iso(),
+    }
+    logger.info(json.dumps(audit))
+    if denied:
+        return _error("forbidden", denied, status=403)
     try:
         return await handler(arguments or {})
     except Exception as exc:
@@ -975,6 +1114,15 @@ def _get_http_session_manager():
             app=app, json_response=True, stateless=True,
         )
     return _http_session_manager
+
+
+def _json_response(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "statusCode": 200,
+        "headers": {"content-type": "application/json"},
+        "body": json.dumps(doc),
+        "isBase64Encoded": False,
+    }
 
 
 async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -1003,8 +1151,16 @@ async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return _handle_register(event)
 
     # MCP routes require authentication
-    if path == "/mcp" or path.startswith("/mcp/"):
-        auth_err = _authenticate_request(event)
+    if path == "/mcp" or path.startswith("/mcp/") or path in ("/caps.json", "/permission-manifest.json"):
+        principal, auth_err = _authenticate(event)
+        if not auth_err:
+            _PRINCIPAL.set(principal)
+            _hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+            _IDEMPOTENCY_KEY.set(_hdrs.get("idempotency-key", ""))
+            if path == "/caps.json" and method == "GET":
+                return _json_response(build_caps())
+            if path == "/permission-manifest.json" and method == "GET":
+                return _json_response(build_permission_manifest())
         if auth_err:
             return {
                 "statusCode": 401,

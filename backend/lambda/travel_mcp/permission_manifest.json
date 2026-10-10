@@ -1,0 +1,33 @@
+{
+  "principals": {
+    "cognito": {
+      "read": "any valid token",
+      "write_groups": [
+        "io-travel-writers",
+        "io-admin"
+      ]
+    },
+    "internal-key": {
+      "access": "all"
+    }
+  },
+  "surface": "io-travel",
+  "tools": {
+    "cancel_flight": {
+      "access": "write"
+    },
+    "create_flight": {
+      "access": "write"
+    },
+    "get_flight": {
+      "access": "read"
+    },
+    "search_flights": {
+      "access": "read"
+    },
+    "update_flight": {
+      "access": "write"
+    }
+  },
+  "v": 1
+}
