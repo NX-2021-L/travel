@@ -58,9 +58,9 @@ def test_discovery_matches_iograph_as(edge):
     prm = json.loads(_call("GET", "/.well-known/oauth-protected-resource")["body"])
     assert prm["resource"] == "https://travel.thepup.io" and prm["authorization_servers"] == ["https://travel.thepup.io"]
     asm = json.loads(_call("GET", "/.well-known/oauth-authorization-server")["body"])
-    assert asm["authorization_endpoint"] == "https://auth.thepup.io/oauth2/authorize"
-    assert asm["token_endpoint"] == "https://auth.thepup.io/oauth2/token"
-    assert asm["revocation_endpoint"] == "https://auth.thepup.io/oauth2/revoke"
+    assert asm["authorization_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/authorize"
+    assert asm["token_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/token"
+    assert asm["revocation_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/revoke"
     assert asm["jwks_uri"] == IOG_ISS + "/.well-known/jwks.json"
     assert asm["token_endpoint_auth_methods_supported"] == ["none"]
     assert asm["registration_endpoint"] == "https://travel.thepup.io/register"

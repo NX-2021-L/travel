@@ -58,7 +58,11 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 BASE_URL = "https://travel.thepup.io"
 IOGRAPH_ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
 IOGRAPH_CLIENT_ID = "6eh4u69l1mqk1m4hfjspeibla8"
-AUTH_BASE = "https://auth.thepup.io"
+# claude.ai's connector token exchange (authorization_code + RFC 8707 resource) is refused
+# with HTTP 400 on the auth.thepup.io custom domain and succeeds on the pool's prefix domain
+# (CloudTrail Token_POST, 60 days: devops/finance/think connects 200 on the prefix domain,
+# every travel connect 400 on auth.thepup.io). The PWAs keep auth.thepup.io; they send no resource.
+AUTH_BASE = "https://io-graph-iograph.auth.us-west-2.amazoncognito.com"
 
 # Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
 # holds other users, so pool membership grants nothing. Only subs in this
