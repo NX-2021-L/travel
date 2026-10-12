@@ -95,34 +95,29 @@ def test_write_groups_extra_requirement(monkeypatch):
     assert lf._authorize(None, "get_flight")
 
 
-def test_http_403_for_non_listed_cognito(monkeypatch):
-    monkeypatch.setattr(lf, "MCP_API_KEY", "secretkey")
-    monkeypatch.setattr(lf, "COGNITO_USER_POOL_ID", "us-east-1_x")
-    monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["s1"])
-    monkeypatch.setattr(lf, "_verify_cognito_jwt", lambda t: {"sub": "coach9"})
+def _edge_event(path, sub, method="GET", pool=None):
+    """The event shape the io-kit MCP edge hands the inner handler after validating the bearer."""
+    ctx = {"principal": {"type": "human", "sub": sub, "groups": []}, "token_use": "access"}
+    if pool:
+        ctx["pool"] = pool
+    return {"requestContext": {"http": {"method": method, "path": path}}, "headers": {}, "io_kit_mcp": ctx}
+
+
+def test_http_403_for_non_listed_edge_principal(monkeypatch):
+    monkeypatch.setenv("IOGRAPH_ALLOWED_SUBS", "s1")
     for path in ("/mcp", "/caps.json"):
-        ev = {"requestContext": {"http": {"method": "GET", "path": path}}, "headers": {"authorization": "Bearer jwt"}}
-        assert asyncio.run(lf._handle_lambda_event(ev))["statusCode"] == 403
-    monkeypatch.setattr(lf, "_verify_cognito_jwt", lambda t: {"sub": "s1"})
-    ev = {"requestContext": {"http": {"method": "GET", "path": "/caps.json"}}, "headers": {"authorization": "Bearer jwt"}}
-    assert asyncio.run(lf._handle_lambda_event(ev))["statusCode"] == 200
+        assert asyncio.run(lf._handle_lambda_event(_edge_event(path, "coach9")))["statusCode"] == 403
+    assert asyncio.run(lf._handle_lambda_event(_edge_event("/caps.json", "s1")))["statusCode"] == 200
 
 
-def test_authenticate_internal_key_and_cognito(monkeypatch):
-    monkeypatch.setattr(lf, "MCP_API_KEY", "k" * 12)
-    monkeypatch.setattr(lf, "COGNITO_USER_POOL_ID", "us-east-1_x")
-    monkeypatch.setattr(lf, "_verify_cognito_jwt", lambda t: {"sub": "u", "email": "a@b.c", "cognito:groups": ["g"]})
-    p, err = lf._authenticate({"headers": {"Authorization": "Bearer " + "k" * 12}})
-    assert err is None and p["kind"] == "internal-key"
-    p, err = lf._authenticate({"headers": {"Authorization": "Bearer jwt"}})
-    assert err is None and p["kind"] == "cognito" and p["groups"] == ["g"]
-    assert lf._authenticate({"headers": {}})[0] is None
+def test_inner_handler_without_edge_principal_is_401():
+    ev = {"requestContext": {"http": {"method": "GET", "path": "/caps.json"}}, "headers": {"authorization": "Bearer x"}}
+    assert asyncio.run(lf._handle_lambda_event(ev))["statusCode"] == 401
 
 
 def test_caps_route_served(monkeypatch):
-    monkeypatch.setattr(lf, "MCP_API_KEY", "secretkey")
-    ev = {"requestContext": {"http": {"method": "GET", "path": "/caps.json"}},
-          "headers": {"authorization": "Bearer secretkey"}}
+    monkeypatch.setenv("IOGRAPH_ALLOWED_SUBS", "s1")
+    ev = _edge_event("/caps.json", "s1")
     resp = asyncio.run(lf._handle_lambda_event(ev))
     assert resp["statusCode"] == 200 and len(json.loads(resp["body"])["actions"]) == 5
     ev["requestContext"]["http"]["path"] = "/permission-manifest.json"

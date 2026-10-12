@@ -28,10 +28,15 @@ mkdir -p "${BUILD_DIR}"
 
 # Install dependencies — native x86_64 pip install matches the
 # GitHub Actions runner and Lambda x86_64 architecture.
+# io-kit-mcp-edge is served from the private CodeArtifact repo io/io-kit (FLY-TSK-022).
+# The token is never echoed; the deploy role has CodeArtifact read.
+CODEARTIFACT_TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
 pip install \
   --target "${BUILD_DIR}" \
   -r "${SCRIPT_DIR}/requirements.txt" \
+  --extra-index-url "https://aws:${CODEARTIFACT_TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" \
   --quiet
+unset CODEARTIFACT_TOKEN
 
 # Copy function code
 cp "${SCRIPT_DIR}/lambda_function.py" "${BUILD_DIR}/"

@@ -18,6 +18,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import ssl
 import sys
 import time
@@ -35,6 +36,9 @@ from botocore.exceptions import ClientError
 from mcp.server import Server
 from mcp.types import TextContent, Tool, ToolAnnotations
 
+from io_kit_mcp_edge import BearerError, EdgeConfig, JwksUnavailable, validate_bearer, wrap
+from io_kit_mcp_edge.jwks import fetch_https
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -43,17 +47,18 @@ TABLE_NAME = os.environ.get("TABLE_NAME", "io-travel-flights")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "streamable_http")
 
-# Cognito OAuth
+# Enceladus-pool internal door (DVP-TSK-903 dual issuer). Validated with
+# io_kit_mcp_edge.validate_bearer; the pool's client is bound by COGNITO_CLIENT_ID.
 COGNITO_USER_POOL_ID = os.environ.get("COGNITO_USER_POOL_ID", "")
 COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
-COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
-COGNITO_DOMAIN = os.environ.get("COGNITO_DOMAIN", "")
 COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 
-# Static bearer token fallback
-MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
-
-SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "")
+# FLY-TSK-022 (DVP-PLN-016 W2.1): Pattern B on the io-kit MCP edge. The edge fronts the
+# io-graph pool's PUBLIC PKCE client; there is no client secret anywhere in this service.
+BASE_URL = "https://travel.thepup.io"
+IOGRAPH_ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
+IOGRAPH_CLIENT_ID = "6eh4u69l1mqk1m4hfjspeibla8"
+AUTH_BASE = "https://auth.thepup.io"
 
 # Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
 # holds other users, so pool membership grants nothing. Only subs in this
@@ -66,14 +71,6 @@ COGNITO_ALLOWED_SUBS = [
 # IOGRAPH_POOL_ID is unset.  Own client binding and own owner allow-list.
 def _csv_env(name: str) -> List[str]:
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
-
-
-def _iograph_pool_id() -> str:
-    return os.environ.get("IOGRAPH_POOL_ID", "").strip()
-
-
-def _iograph_region() -> str:
-    return os.environ.get("IOGRAPH_REGION", "").strip() or _iograph_pool_id().split("_")[0]
 
 
 def _cors_origins() -> List[str]:
@@ -108,124 +105,81 @@ def _get_table():
 
 
 # ---------------------------------------------------------------------------
-# Cognito JWT validation
+# MCP edge (io_kit_mcp_edge): discovery, /register facade, and the bearer gate
 # ---------------------------------------------------------------------------
 
-_cognito_jwks_cache: Dict[str, Any] = {}
-_cognito_jwks_fetched_at: float = 0.0
-_COGNITO_JWKS_TTL = 3600  # 1 hour
+def _fetch_jwks(uri: str) -> Dict[str, Any]:
+    return fetch_https(uri)
 
 
-_iograph_jwks_cache: Dict[str, Any] = {}
-_iograph_jwks_fetched_at: float = 0.0
-
-
-def _get_cognito_jwks(pool: str = "enceladus") -> Dict[str, Any]:
-    global _cognito_jwks_cache, _cognito_jwks_fetched_at
-    global _iograph_jwks_cache, _iograph_jwks_fetched_at
-    now = time.time()
-    if pool == "iograph":
-        cache, fetched_at = _iograph_jwks_cache, _iograph_jwks_fetched_at
-        pool_id, region = _iograph_pool_id(), _iograph_region()
-    else:
-        cache, fetched_at = _cognito_jwks_cache, _cognito_jwks_fetched_at
-        pool_id = COGNITO_USER_POOL_ID
-        region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_")[0]
-    if cache and (now - fetched_at) < _COGNITO_JWKS_TTL:
-        return cache
-
-    if not pool_id:
-        raise ValueError("COGNITO_USER_POOL_ID not set")
-
-    url = (
-        f"https://cognito-idp.{region}.amazonaws.com/"
-        f"{pool_id}/.well-known/jwks.json"
+def _edge_config() -> EdgeConfig:
+    return EdgeConfig(
+        base_url=BASE_URL,
+        issuer=IOGRAPH_ISSUER,
+        client_id=IOGRAPH_CLIENT_ID,
+        authorization_server={
+            "authorization_endpoint": f"{AUTH_BASE}/oauth2/authorize",
+            "token_endpoint": f"{AUTH_BASE}/oauth2/token",
+            "revocation_endpoint": f"{AUTH_BASE}/oauth2/revoke",
+            "userinfo_endpoint": f"{AUTH_BASE}/oauth2/userInfo",
+        },
+        jwks_uri=f"{IOGRAPH_ISSUER}/.well-known/jwks.json",
+        mount_path="/",  # the claude.ai connector POSTs MCP to "/" (DVP-ISS-144)
+        registration_facade={"client_id": IOGRAPH_CLIENT_ID},  # E16-R1a: hands-off connect, never a secret
+        fetch_jwks=lambda uri: _fetch_jwks(uri),
+        logger=logger,
     )
 
-    import jwt as _jwt_mod
-    from jwt.algorithms import RSAAlgorithm as _RSA
 
-    ctx = ssl.create_default_context()
+_EDGE = None
+_ENC_CFG = None
+
+
+def _get_edge():
+    global _EDGE
+    if _EDGE is None:
+        _EDGE = wrap(_edge_inner, _edge_config())
+    return _EDGE
+
+
+def _enceladus_config() -> Optional[EdgeConfig]:
+    """Edge config for the Enceladus-pool internal door; None when that pool is not configured."""
+    global _ENC_CFG
+    if not (COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID):
+        return None
+    region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_", 1)[0]
+    iss = f"https://cognito-idp.{region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
+    if _ENC_CFG is None or _ENC_CFG.issuer != iss or _ENC_CFG.client_id != COGNITO_CLIENT_ID:
+        _ENC_CFG = EdgeConfig(
+            base_url=BASE_URL, issuer=iss, client_id=COGNITO_CLIENT_ID, authorization_server={},
+            jwks_uri=f"{iss}/.well-known/jwks.json", mount_path="/",
+            fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger,
+        )
+    return _ENC_CFG
+
+
+def _enceladus_door(event: Dict[str, Any]):
+    """Validate an Enceladus-pool bearer with validate_bearer (full RS256/iss/exp/client check).
+
+    Returns a ValidatedToken, or None to fall through to the edge (which then answers 401).
+    Never serves discovery or /register paths. Fail-closed on every error.
+    """
+    cfg = _enceladus_config()
+    if cfg is None:
+        return None
+    hdrs = {str(k).lower(): str(v) for k, v in (event.get("headers") or {}).items() if v is not None}
+    m = re.match(r"^bearer[ \t]+(\S+)[ \t]*$", hdrs.get("authorization", ""), re.I)
+    path = str((event.get("requestContext", {}).get("http", {}) or {}).get("path") or event.get("rawPath") or "/")
+    if not m or path.startswith("/.well-known") or path == "/register":
+        return None
     try:
-        import certifi
-        ctx.load_verify_locations(certifi.where())
-    except Exception:
-        pass
-    with urllib.request.urlopen(url, timeout=5, context=ctx) as resp:
-        data = json.loads(resp.read())
-
-    new_cache: Dict[str, Any] = {}
-    for key_data in data.get("keys", []):
-        kid = key_data.get("kid")
-        if kid:
-            new_cache[kid] = _RSA.from_jwk(json.dumps(key_data))
-
-    if pool == "iograph":
-        _iograph_jwks_cache, _iograph_jwks_fetched_at = new_cache, now
-        return _iograph_jwks_cache
-    _cognito_jwks_cache = new_cache
-    _cognito_jwks_fetched_at = now
-    return _cognito_jwks_cache
-
-
-def _verify_cognito_jwt(token: str) -> Dict[str, Any]:
-    import jwt as _jwt_mod
-
-    header = _jwt_mod.get_unverified_header(token)
-    kid = header.get("kid")
-    alg = header.get("alg", "RS256")
-    if alg != "RS256":
-        raise ValueError(f"Unexpected token algorithm: {alg}")
-
-    # Pick the pool from the unverified iss; the signature and iss are then
-    # verified against THAT pool, with that pool's client binding.
-    unverified_iss = str(_jwt_mod.decode(token, options={"verify_signature": False}).get("iss") or "")
-    enc_region = COGNITO_REGION or COGNITO_USER_POOL_ID.split("_", 1)[0]
-    enc_iss = f"https://cognito-idp.{enc_region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
-    if COGNITO_USER_POOL_ID and unverified_iss == enc_iss:
-        pool, expected_issuer, client_ids = "enceladus", enc_iss, [COGNITO_CLIENT_ID]
-    elif _iograph_pool_id() and unverified_iss == (
-        f"https://cognito-idp.{_iograph_region()}.amazonaws.com/{_iograph_pool_id()}"
-    ):
-        pool, expected_issuer = "iograph", unverified_iss
-        client_ids = _csv_env("IOGRAPH_CLIENT_IDS")
-        if not client_ids:
-            raise ValueError("io-graph client binding not configured")
-    else:
-        raise ValueError("Token issuer not accepted")
-
-    key = _get_cognito_jwks(pool).get(kid)
-    if key is None:
-        raise ValueError("Token key ID not found in JWKS")
-
-    claims = _jwt_mod.decode(
-        token,
-        key,
-        algorithms=["RS256"],
-        issuer=expected_issuer,
-        options={"verify_exp": True, "verify_aud": False},
-    )
-
-    if any(client_ids):
-        token_use = str(claims.get("token_use") or "").strip().lower()
-        if token_use == "access":
-            value = str(claims.get("client_id") or "")
-        elif token_use == "id":
-            value = str(claims.get("aud") or "")
-        else:
-            value = None
-        if value is not None:
-            matched = False
-            for cid in client_ids:
-                if cid and hmac.compare_digest(value, cid):
-                    matched = True
-            if not matched:
-                raise ValueError("Token client binding mismatch")
-        elif pool == "iograph":
-            raise ValueError("Token use not accepted")
-
-    claims["_pool"] = pool
-    return claims
+        parts = m.group(1).split(".")
+        peek = json.loads(b64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        if peek.get("iss") != cfg.issuer:
+            return None
+        return validate_bearer(m.group(1), cfg)
+    except (BearerError, JwksUnavailable, ValueError, IndexError, AttributeError):
+        return None
 
 
 class _RequestHolder:
@@ -270,279 +224,12 @@ def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
         "allowed": bool(claims.get("sub")) and str(claims.get("sub")) in (
             _csv_env("IOGRAPH_ALLOWED_SUBS") if claims.get("_pool") == "iograph" else COGNITO_ALLOWED_SUBS
         ),
-        "pool": claims.get("_pool", "enceladus"),
+        "pool": claims.get("_pool", "iograph"),
     }
 
 
 INTERNAL_PRINCIPAL = {"kind": "internal-key", "id": "internal-key", "sub": "", "groups": [], "allowed": True}
 
-
-def _authenticate(event: Dict[str, Any]) -> tuple:
-    """Validate bearer token. Returns (principal, None) or (None, error message)."""
-    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
-    auth = headers.get("authorization", "")
-
-    if not auth.startswith("Bearer "):
-        return None, "Missing or invalid Authorization header"
-
-    token = auth[7:].strip()
-    if not token:
-        return None, "Empty bearer token"
-
-    # Static API key check (internal key: full access)
-    if MCP_API_KEY and hmac.compare_digest(token, MCP_API_KEY):
-        return dict(INTERNAL_PRINCIPAL), None
-
-    # Cognito JWT check (human principal; access governed by POLICY_TABLE)
-    if COGNITO_USER_POOL_ID:
-        try:
-            return _principal_from_claims(_verify_cognito_jwt(token)), None
-        except Exception as exc:
-            return None, f"JWT validation failed: {exc}"
-
-    return None, "No authentication method configured"
-
-
-def _authenticate_request(event: Dict[str, Any]) -> Optional[str]:
-    """Validate bearer token. Returns None on success, error message on failure."""
-    return _authenticate(event)[1]
-
-
-# ---------------------------------------------------------------------------
-# Helper: server base URL
-# ---------------------------------------------------------------------------
-
-def _get_server_base_url(event: Dict[str, Any]) -> str:
-    if SERVER_BASE_URL:
-        return SERVER_BASE_URL.rstrip("/")
-    headers = event.get("headers") or {}
-    host = headers.get("host") or headers.get("Host") or "localhost"
-    scheme = "https" if headers.get("x-forwarded-proto") == "https" else "https"
-    return f"{scheme}://{host}"
-
-
-# ---------------------------------------------------------------------------
-# OAuth endpoint handlers (Cognito mode)
-# ---------------------------------------------------------------------------
-
-def _handle_oauth_metadata(event: Dict[str, Any]) -> Dict[str, Any]:
-    base = _get_server_base_url(event)
-    return {
-        "statusCode": 200,
-        "headers": {"content-type": "application/json", "cache-control": "public, max-age=3600"},
-        "body": json.dumps({
-            "issuer": base,
-            "authorization_endpoint": f"{base}/authorize",
-            "token_endpoint": f"{base}/oauth/token",
-            "registration_endpoint": f"{base}/oauth/register",
-            "token_endpoint_auth_methods_supported": ["client_secret_post"],
-            "grant_types_supported": ["authorization_code", "refresh_token"],
-            "response_types_supported": ["code"],
-            "scopes_supported": ["openid", "email", "profile"],
-            "code_challenge_methods_supported": ["S256"],
-        }),
-        "isBase64Encoded": False,
-    }
-
-
-def _handle_authorize(event: Dict[str, Any]) -> Dict[str, Any]:
-    qs = event.get("queryStringParameters") or {}
-    base = _get_server_base_url(event)
-    cognito_domain = COGNITO_DOMAIN.rstrip("/")
-
-    missing = [p for p in ("response_type", "client_id") if not qs.get(p)]
-    if missing:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json", "cache-control": "no-store"},
-            "body": json.dumps({
-                "error": "invalid_request",
-                "error_description": f"Missing required parameter(s): {', '.join(missing)}",
-            }),
-            "isBase64Encoded": False,
-        }
-
-    client_redirect_uri = qs.get("redirect_uri", "")
-    client_state = qs.get("state", "")
-
-    relay = json.dumps({"ru": client_redirect_uri, "st": client_state}, separators=(",", ":"))
-    cognito_state = b64.urlsafe_b64encode(relay.encode()).decode().rstrip("=")
-
-    params = {}
-    for key in ("response_type", "client_id", "code_challenge", "code_challenge_method", "scope"):
-        val = qs.get(key, "")
-        if val:
-            params[key] = val
-    params["redirect_uri"] = f"{base}/callback"
-    params["state"] = cognito_state
-    if "scope" not in params:
-        params["scope"] = "openid email profile"
-
-    location = f"{cognito_domain}/oauth2/authorize?{urllib.parse.urlencode(params)}"
-    return {
-        "statusCode": 302,
-        "headers": {"location": location, "cache-control": "no-store"},
-        "body": "",
-        "isBase64Encoded": False,
-    }
-
-
-def _handle_callback(event: Dict[str, Any]) -> Dict[str, Any]:
-    qs = event.get("queryStringParameters") or {}
-    code = qs.get("code", "")
-    state_b64 = qs.get("state", "")
-
-    if not code or not state_b64:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json"},
-            "body": json.dumps({"error": "invalid_request", "error_description": "Missing code or state"}),
-            "isBase64Encoded": False,
-        }
-
-    # Decode relay state
-    padding = 4 - len(state_b64) % 4
-    if padding != 4:
-        state_b64 += "=" * padding
-    try:
-        relay = json.loads(b64.urlsafe_b64decode(state_b64).decode())
-    except Exception:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json"},
-            "body": json.dumps({"error": "invalid_state"}),
-            "isBase64Encoded": False,
-        }
-
-    client_redirect = relay.get("ru", "")
-    client_state = relay.get("st", "")
-
-    if not client_redirect:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json"},
-            "body": json.dumps({"error": "missing_redirect_uri"}),
-            "isBase64Encoded": False,
-        }
-
-    # Redirect back to client with the auth code
-    sep = "&" if "?" in client_redirect else "?"
-    location = f"{client_redirect}{sep}code={urllib.parse.quote(code)}"
-    if client_state:
-        location += f"&state={urllib.parse.quote(client_state)}"
-
-    return {
-        "statusCode": 302,
-        "headers": {"location": location, "cache-control": "no-store"},
-        "body": "",
-        "isBase64Encoded": False,
-    }
-
-
-def _handle_token(event: Dict[str, Any]) -> Dict[str, Any]:
-    cognito_domain = COGNITO_DOMAIN.rstrip("/")
-    token_url = f"{cognito_domain}/oauth2/token"
-    base = _get_server_base_url(event)
-
-    body_raw = event.get("body") or ""
-    if event.get("isBase64Encoded"):
-        body_raw = b64.b64decode(body_raw).decode()
-
-    params = urllib.parse.parse_qs(body_raw, keep_blank_values=True)
-    grant_type = (params.get("grant_type") or [""])[0]
-    if not grant_type:
-        return {
-            "statusCode": 400,
-            "headers": {"content-type": "application/json", "cache-control": "no-store"},
-            "body": json.dumps({"error": "invalid_request", "error_description": "Missing grant_type"}),
-            "isBase64Encoded": False,
-        }
-
-    if "redirect_uri" in params:
-        params["redirect_uri"] = [f"{base}/callback"]
-        body_raw = urllib.parse.urlencode({k: v[0] for k, v in params.items()})
-
-    ctx = ssl.create_default_context()
-    try:
-        import certifi
-        ctx.load_verify_locations(certifi.where())
-    except Exception:
-        pass
-
-    req = urllib.request.Request(
-        token_url,
-        data=body_raw.encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-            return {
-                "statusCode": resp.status,
-                "headers": {"content-type": "application/json", "cache-control": "no-store"},
-                "body": resp.read().decode("utf-8"),
-                "isBase64Encoded": False,
-            }
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode("utf-8", errors="replace") if exc.fp else "{}"
-        return {
-            "statusCode": exc.code,
-            "headers": {"content-type": "application/json"},
-            "body": err_body,
-            "isBase64Encoded": False,
-        }
-    except Exception as exc:
-        return {
-            "statusCode": 502,
-            "headers": {"content-type": "application/json"},
-            "body": json.dumps({"error": "server_error", "error_description": str(exc)}),
-            "isBase64Encoded": False,
-        }
-
-
-def _handle_register(event: Dict[str, Any]) -> Dict[str, Any]:
-    body_raw = event.get("body") or ""
-    if event.get("isBase64Encoded"):
-        body_raw = b64.b64decode(body_raw).decode()
-    try:
-        reg = json.loads(body_raw) if body_raw else {}
-    except Exception:
-        reg = {}
-
-    redirect_uris = reg.get("redirect_uris", [])
-    return {
-        "statusCode": 200,
-        "headers": {"content-type": "application/json", "cache-control": "no-store"},
-        "body": json.dumps({
-            "client_id": COGNITO_CLIENT_ID,
-            "client_secret": COGNITO_CLIENT_SECRET,
-            "redirect_uris": redirect_uris,
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "scope": "openid email profile",
-            "token_endpoint_auth_method": "client_secret_post",
-        }),
-        "isBase64Encoded": False,
-    }
-
-
-def _handle_protected_resource(event: Dict[str, Any]) -> Dict[str, Any]:
-    base = _get_server_base_url(event)
-    return {
-        "statusCode": 200,
-        "headers": {"content-type": "application/json", "cache-control": "public, max-age=3600"},
-        "body": json.dumps({
-            "resource": base,
-            "authorization_servers": [base],
-            "scopes_supported": ["openid", "email", "profile"],
-        }),
-        "isBase64Encoded": False,
-    }
-
-
-# ---------------------------------------------------------------------------
-# DynamoDB helpers
-# ---------------------------------------------------------------------------
 
 def _decimal_to_native(obj):
     """Convert DynamoDB Decimal types to Python native for JSON serialization."""
@@ -1338,48 +1025,36 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     if method == "OPTIONS":  # CORS preflight, no auth (DVP-TSK-903)
         return {"statusCode": 204, "headers": {}, "body": "", "isBase64Encoded": False}
 
-    # OAuth / well-known routes (no auth required)
-    if path == "/.well-known/oauth-authorization-server" and method == "GET":
-        return _handle_oauth_metadata(event)
-    if path == "/.well-known/oauth-protected-resource" and method == "GET":
-        return _handle_protected_resource(event)
-    if path == "/authorize" and method == "GET":
-        return _handle_authorize(event)
-    if path == "/callback" and method == "GET":
-        return _handle_callback(event)
-    if path == "/oauth/token" and method == "POST":
-        return _handle_token(event)
-    if path == "/oauth/register" and method == "POST":
-        return _handle_register(event)
-
-    # MCP routes require authentication
-    # Every route below the OAuth/well-known ones is an MCP or caps route and needs auth.
-    # The claude.ai connector POSTs MCP to "/" (and "/default" strips to "/"), so gating
-    # only /mcp left the tool layer without a principal (DVP-ISS-144).
-    if True:
-        principal, auth_err = _authenticate(event)
-        if not auth_err and not principal.get("allowed"):
-            return {
-                "statusCode": 403,
-                "headers": {"content-type": "application/json"},
-                "body": json.dumps({"error": "forbidden", "error_description": "principal is not in the allow-list"}),
-                "isBase64Encoded": False,
-            }
-        if not auth_err:
-            _PRINCIPAL.set(principal)
-            _hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
-            _IDEMPOTENCY_KEY.set(_hdrs.get("idempotency-key", ""))
-            if path == "/caps.json" and method == "GET":
-                return _json_response(build_caps())
-            if path == "/permission-manifest.json" and method == "GET":
-                return _json_response(build_permission_manifest())
-        if auth_err:
-            return {
-                "statusCode": 401,
-                "headers": {"content-type": "application/json"},
-                "body": json.dumps({"error": "unauthorized", "error_description": auth_err}),
-                "isBase64Encoded": False,
-            }
+    # The edge (io_kit_mcp_edge) has already validated the bearer and handed over the principal.
+    # Anything without it never reaches a tool (defence in depth).
+    ctx = event.get("io_kit_mcp") or {}
+    edge_principal = ctx.get("principal")
+    if not isinstance(edge_principal, dict) or not edge_principal.get("sub"):
+        return {
+            "statusCode": 401,
+            "headers": {"content-type": "application/json"},
+            "body": json.dumps({"error": "unauthorized"}),
+            "isBase64Encoded": False,
+        }
+    principal = _principal_from_claims({
+        "sub": edge_principal.get("sub"),
+        "cognito:groups": edge_principal.get("groups") or [],
+        "_pool": ctx.get("pool") or "iograph",
+    })
+    if not principal.get("allowed"):
+        return {
+            "statusCode": 403,
+            "headers": {"content-type": "application/json"},
+            "body": json.dumps({"error": "forbidden", "error_description": "principal is not in the allow-list"}),
+            "isBase64Encoded": False,
+        }
+    _PRINCIPAL.set(principal)
+    _hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    _IDEMPOTENCY_KEY.set(_hdrs.get("idempotency-key", ""))
+    if path == "/caps.json" and method == "GET":
+        return _json_response(build_caps())
+    if path == "/permission-manifest.json" and method == "GET":
+        return _json_response(build_permission_manifest())
 
     # Build ASGI scope
     raw_headers = event.get("headers") or {}
@@ -1442,6 +1117,10 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _edge_inner(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
+    return asyncio.run(_handle_lambda_event(event))
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     if MCP_TRANSPORT != "streamable_http":
@@ -1451,7 +1130,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "body": json.dumps({"error": "Requires MCP_TRANSPORT=streamable_http"}),
             "isBase64Encoded": False,
         }
-    return _with_cors(event, asyncio.run(_handle_lambda_event(event)))
+    door = _enceladus_door(event)
+    if door is not None:  # Enceladus-pool internal door: validated by validate_bearer, then straight to the tools
+        event.setdefault("io_kit_mcp", {}).update(
+            {"principal": door.principal, "token_use": door.token_use, "pool": "enceladus"})
+        return _with_cors(event, _edge_inner(event, context))
+    return _with_cors(event, _get_edge()(event, context))
 
 
 def _with_cors(event: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, Any]:

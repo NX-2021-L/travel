@@ -12,10 +12,14 @@ import os
 import sys
 
 KEYS = [
-    "TABLE_NAME", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET",
-    "COGNITO_DOMAIN", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "TRAVEL_WRITE_GROUPS",
-    "MCP_API_KEY", "SERVER_BASE_URL",
+    "TABLE_NAME", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS",
+    "IOGRAPH_ALLOWED_SUBS", "TRAVEL_WRITE_GROUPS",
 ]
+
+# FLY-TSK-022: retired by the edge adoption. Stripped from the function env on every deploy so a
+# stale confidential-client secret or static key can never survive the merge with CURRENT_ENV.
+DROPPED = ("COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_API_KEY",
+           "IOGRAPH_POOL_ID", "IOGRAPH_REGION", "IOGRAPH_CLIENT_IDS")
 
 
 def resolve(current: dict, supplied: dict) -> dict:
@@ -25,7 +29,7 @@ def resolve(current: dict, supplied: dict) -> dict:
     for k in KEYS:
         if supplied.get(k):
             env[k] = supplied[k]
-    return {k: v for k, v in env.items() if v}
+    return {k: v for k, v in env.items() if v and k not in DROPPED}
 
 
 def guard(env: dict) -> str:
