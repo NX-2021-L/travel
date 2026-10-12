@@ -45,7 +45,9 @@ def _hdr(resp, name):
 
 
 @pytest.mark.parametrize("method", ["GET", "POST"])
-@pytest.mark.parametrize("path", ["/oauth/register", "/oauth/token", "/authorize", "/callback", "/mcp", "/", "/caps.json"])
+# /authorize is deliberately public again since FLY-TSK-022: the kit's secretless 302 to Cognito (F4b); see
+# test_authorize_redirect_* below. It never proxies a token and never carries a secret.
+@pytest.mark.parametrize("path", ["/oauth/register", "/oauth/token", "/callback", "/mcp", "/", "/caps.json"])
 def test_former_open_paths_deny_anonymous(edge, method, path):
     r = _call(method, path, body="{}" if method == "POST" else "")
     assert r["statusCode"] in (401, 404)
@@ -58,7 +60,7 @@ def test_discovery_matches_iograph_as(edge):
     prm = json.loads(_call("GET", "/.well-known/oauth-protected-resource")["body"])
     assert prm["resource"] == "https://travel.thepup.io" and prm["authorization_servers"] == ["https://travel.thepup.io"]
     asm = json.loads(_call("GET", "/.well-known/oauth-authorization-server")["body"])
-    assert asm["authorization_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/authorize"
+    assert asm["authorization_endpoint"] == "https://travel.thepup.io/authorize"  # F4b authorize redirect
     assert asm["token_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/token"
     assert asm["revocation_endpoint"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/revoke"
     assert asm["jwks_uri"] == IOG_ISS + "/.well-known/jwks.json"
@@ -89,3 +91,19 @@ def test_bad_tokens_and_unlisted_sub_denied(edge):
 def test_no_secret_left_in_source():
     src = (base.D / "lambda_function.py").read_text() + (base.D / "deploy.sh").read_text()
     assert "COGNITO_CLIENT_SECRET" not in src and "client_secret_post" not in src
+
+
+def test_authorize_redirect_drops_resource(env):
+    """F4b: Cognito managed login v2 refuses codes minted from an authorize that carried resource."""
+    ev = {"version": "2.0", "rawPath": "/authorize", "rawQueryString": "response_type=code&client_id=6eh4u69l1mqk1m4hfjspeibla8&state=s&resource=https%3A%2F%2Ftravel.thepup.io",
+          "headers": {}, "requestContext": {"http": {"method": "GET"}, "stage": "$default"}}
+    res = lf.lambda_handler(ev, None)
+    assert res["statusCode"] == 302
+    assert res["headers"]["location"] == "https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/authorize?response_type=code&client_id=6eh4u69l1mqk1m4hfjspeibla8&state=s"
+
+
+def test_authorize_redirect_is_secretless_and_get_only(edge):
+    r = _call("GET", "/authorize")
+    assert r["statusCode"] == 302 and not any(m in (r.get("body") or "") for m in SECRET_MARKERS)
+    assert _hdr(r, "location").startswith("https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/authorize")
+    assert _call("POST", "/authorize", body="{}")["statusCode"] == 405

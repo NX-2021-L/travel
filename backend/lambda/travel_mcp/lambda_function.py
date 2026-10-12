@@ -58,10 +58,9 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 BASE_URL = "https://travel.thepup.io"
 IOGRAPH_ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
 IOGRAPH_CLIENT_ID = "6eh4u69l1mqk1m4hfjspeibla8"
-# claude.ai's connector token exchange (authorization_code + RFC 8707 resource) is refused
-# with HTTP 400 on the auth.thepup.io custom domain and succeeds on the pool's prefix domain
-# (CloudTrail Token_POST, 60 days: devops/finance/think connects 200 on the prefix domain,
-# every travel connect 400 on auth.thepup.io). The PWAs keep auth.thepup.io; they send no resource.
+# The pool runs Cognito managed login v2, which makes a code unredeemable when /oauth2/authorize carries an
+# RFC 8707 resource (DVP-PLN-016 F4b, kit KD-01). claude.ai always sends one, so the edge advertises its own
+# /authorize (authorize_redirect below), which 302s here without it. Token/revoke stay on Cognito.
 AUTH_BASE = "https://io-graph-iograph.auth.us-west-2.amazoncognito.com"
 
 # Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
@@ -130,6 +129,7 @@ def _edge_config() -> EdgeConfig:
         jwks_uri=f"{IOGRAPH_ISSUER}/.well-known/jwks.json",
         mount_path="/",  # the claude.ai connector POSTs MCP to "/" (DVP-ISS-144)
         registration_facade={"client_id": IOGRAPH_CLIENT_ID},  # E16-R1a: hands-off connect, never a secret
+        authorize_redirect={"upstream": f"{AUTH_BASE}/oauth2/authorize"},  # F4b: drop resource before Cognito
         fetch_jwks=lambda uri: _fetch_jwks(uri),
         logger=logger,
     )
