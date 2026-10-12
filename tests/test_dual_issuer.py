@@ -11,8 +11,7 @@ from jwt.algorithms import RSAAlgorithm
 import test_e2e_lambda_handler as base  # reuses moto env + rpc helpers
 from test_e2e_lambda_handler import env, lf, payload, rpc  # noqa: F401
 
-IOG_POOL, IOG_REGION, IOG_CLIENT, IOG_KID = "us-west-2_IOGPOOL", "us-west-2", "think-client", "iogkid"
-IOG_ISS = f"https://cognito-idp.{IOG_REGION}.amazonaws.com/{IOG_POOL}"
+IOG_KID, IOG_ISS, IOG_CLIENT = "iogkid", lf.IOGRAPH_ISSUER, lf.IOGRAPH_CLIENT_ID
 
 
 def _tok(priv, kid, iss, sub, client, use="access"):
@@ -30,22 +29,8 @@ def dual(env, monkeypatch):  # noqa: F811
     jwk = json.loads(RSAAlgorithm.to_jwk(iog.public_key()))
     jwk.update({"kid": IOG_KID, "alg": "RS256", "use": "sig"})
     iog_jwks = json.dumps({"keys": [jwk]}).encode()
-    enc_open = lf.urllib.request.urlopen
-
-    class Resp(io.BytesIO):
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    def fake(url, *a, **k):
-        return Resp(iog_jwks) if IOG_POOL in str(url) else enc_open(url, *a, **k)
-
-    monkeypatch.setattr(lf.urllib.request, "urlopen", fake)
-    monkeypatch.setenv("IOGRAPH_POOL_ID", IOG_POOL)
-    monkeypatch.setenv("IOGRAPH_REGION", IOG_REGION)
-    monkeypatch.setenv("IOGRAPH_CLIENT_IDS", IOG_CLIENT)
+    base.JWKS[IOG_ISS] = json.loads(iog_jwks)
     monkeypatch.setenv("IOGRAPH_ALLOWED_SUBS", "io-sub")
-    monkeypatch.setattr(lf, "_iograph_jwks_cache", {})
-    monkeypatch.setattr(lf, "_iograph_jwks_fetched_at", 0.0)
     return enc_priv, iog, other
 
 
@@ -95,16 +80,10 @@ def test_enceladus_pool_still_works(dual):
     assert payload(_get(_tok(enc, base.KID, base.ISS, "owner-sub", base.CLIENT)))["success"]
 
 
-def test_iograph_unset_rejects_iograph_token(dual, monkeypatch):
-    _, iog, _ = dual
-    monkeypatch.delenv("IOGRAPH_POOL_ID")
-    assert _get(_tok(iog, IOG_KID, IOG_ISS, "io-sub", IOG_CLIENT))["statusCode"] == 401
 
 
-def test_iograph_empty_client_list_denies(dual, monkeypatch):
-    _, iog, _ = dual
-    monkeypatch.setenv("IOGRAPH_CLIENT_IDS", "")
-    assert _get(_tok(iog, IOG_KID, IOG_ISS, "io-sub", IOG_CLIENT))["statusCode"] == 401
+
+
 
 
 def _event(method, origin, bearer=None):

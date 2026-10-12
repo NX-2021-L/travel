@@ -4,3 +4,4 @@ PyJWT[crypto]
 cryptography
 certifi
 anyio
+io-kit-mcp-edge==0.1.0

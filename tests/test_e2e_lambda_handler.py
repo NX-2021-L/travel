@@ -28,7 +28,7 @@ import lambda_function as lf  # noqa: E402
 
 POOL, CLIENT, REGION, KID = "us-east-1_TESTPOOL", "client123", "us-east-1", "kid1"
 ISS = f"https://cognito-idp.{REGION}.amazonaws.com/{POOL}"
-KEY = "machine-key-0123456789"
+JWKS = {}  # issuer -> JWKS document (the only thing faked besides moto)
 
 
 @pytest.fixture
@@ -38,19 +38,16 @@ def env(monkeypatch):
     jwk.update({"kid": KID, "alg": "RS256", "use": "sig"})
     jwks = json.dumps({"keys": [jwk]}).encode()
 
-    class Resp(io.BytesIO):
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    monkeypatch.setattr(lf.urllib.request, "urlopen", lambda *a, **k: Resp(jwks))
+    JWKS.clear()
+    JWKS[ISS] = json.loads(jwks)
+    monkeypatch.setattr(lf, "_fetch_jwks", lambda uri: JWKS[uri.rsplit("/.well-known", 1)[0]])
+    monkeypatch.setattr(lf, "_EDGE", None)
+    monkeypatch.setattr(lf, "_ENC_CFG", None)
     monkeypatch.setattr(lf, "COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setattr(lf, "COGNITO_CLIENT_ID", CLIENT)
     monkeypatch.setattr(lf, "COGNITO_REGION", REGION)
-    monkeypatch.setattr(lf, "MCP_API_KEY", KEY)
     monkeypatch.setattr(lf, "COGNITO_ALLOWED_SUBS", ["owner-sub"])
     monkeypatch.setattr(lf, "TRAVEL_WRITE_GROUPS", [])
-    monkeypatch.setattr(lf, "_cognito_jwks_cache", {})
-    monkeypatch.setattr(lf, "_cognito_jwks_fetched_at", 0.0)
     with mock_aws():
         lf._dynamo_resource = None
         t = boto3.resource("dynamodb", region_name="us-west-2").create_table(
@@ -90,20 +87,20 @@ def payload(resp):
 
 
 @pytest.mark.parametrize("path", ["/mcp", "/", "/default"])
-@pytest.mark.parametrize("who", ["machine", "owner"])
+@pytest.mark.parametrize("who", ["owner"])
 def test_read_succeeds(env, who, path):
     # "/" is where the claude.ai connector POSTs MCP (DVP-ISS-144); "/default" strips to "/".
     priv, table = env
-    bearer = KEY if who == "machine" else token(priv, "owner-sub")
+    bearer = token(priv, "owner-sub")
     out = payload(rpc(bearer, "get_flight", {"flight_id": "abc"}, path=path))
     assert out["success"] is True and out["result"]["flight_id"] == "abc"
 
 
 @pytest.mark.skipif(not hasattr(lf, "_split_control"), reason="dry_run lands with DVP-TSK-900")
-@pytest.mark.parametrize("who", ["machine", "owner"])
+@pytest.mark.parametrize("who", ["owner"])
 def test_dry_run_succeeds(env, who):
     priv, table = env
-    bearer = KEY if who == "machine" else token(priv, "owner-sub")
+    bearer = token(priv, "owner-sub")
     out = payload(rpc(bearer, "cancel_flight", {"flight_id": "abc", "dry_run": True}))
     assert out["success"] is True and out["result"]["resolved_call"]["v"] == 1
     assert table.get_item(Key={"flight_id": "abc"})["Item"]["status"] == "active"
@@ -130,7 +127,7 @@ def test_unset_allow_list_denies_owner(env, monkeypatch):
 
 
 def test_principal_holder_reset_after_request(env):
-    rpc(KEY, "get_flight", {"flight_id": "abc"})
+    rpc(token(env[0], "owner-sub"), "get_flight", {"flight_id": "abc"})
     assert lf._PRINCIPAL.get() is None
 
 
@@ -141,8 +138,9 @@ import resolve_env  # noqa: E402
 
 def test_resolve_env_preserves_allow_list():
     cur = {"COGNITO_USER_POOL_ID": "p", "COGNITO_ALLOWED_SUBS": "a,b", "EXTRA": "keep"}
-    env = resolve_env.resolve(cur, {"MCP_API_KEY": "k"})
-    assert env["COGNITO_ALLOWED_SUBS"] == "a,b" and env["EXTRA"] == "keep" and env["MCP_API_KEY"] == "k"
+    env = resolve_env.resolve(cur, {"TRAVEL_WRITE_GROUPS": "g", "COGNITO_CLIENT_SECRET": "s"})
+    assert env["COGNITO_ALLOWED_SUBS"] == "a,b" and env["EXTRA"] == "keep" and env["TRAVEL_WRITE_GROUPS"] == "g"
+    assert "COGNITO_CLIENT_SECRET" not in env and "COGNITO_CLIENT_SECRET" not in resolve_env.resolve({"COGNITO_CLIENT_SECRET": "old"}, {})
     assert resolve_env.guard(env) == ""
     assert resolve_env.resolve(cur, {"COGNITO_ALLOWED_SUBS": "z"})["COGNITO_ALLOWED_SUBS"] == "z"
 
