@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  FLY-TSK-023 (DVP-PLN-016 E16-R2): io-travel Lambda@Edge origin-response handler that restores
+  WWW-Authenticate on 401 behind the Lambda Function URL origin (the Function URL remaps it to
+  x-amzn-Remapped-WWW-Authenticate; CloudFront Functions do not run on 4xx). Mirrors
+  @io-kit/mcp 0.1.0 infra/edge-401-header.mjs. Deploy in us-east-1, then run associate-edge-401.sh.
+Resources:
+  EdgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, edgelambda.amazonaws.com]
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  EdgeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: io-travel-edge-401-header
+      Description: Restores WWW-Authenticate on 401 (E16-R2)
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt EdgeRole.Arn
+      MemorySize: 128
+      Timeout: 5
+      Code:
+        ZipFile: |
+          // Mirrors @io-kit/mcp 0.1.0 infra/edge-401-header.mjs: 401 only; every other response is untouched.
+          exports.handler = async (event) => {
+            const response = event.Records[0].cf.response;
+            if (String(response.status) !== "401") return response;
+            const remapped = response.headers["x-amzn-remapped-www-authenticate"];
+            if (remapped && remapped.length > 0 && !response.headers["www-authenticate"]) {
+              response.headers["www-authenticate"] = [{ key: "WWW-Authenticate", value: remapped[0].value }];
+            }
+            return response;
+          };
+  EdgeVersion1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref EdgeFunction
+      Description: edge-401-header v1 (@io-kit/mcp 0.1.0)
+Outputs:
+  VersionArn:
+    Description: Qualified version ARN to associate as origin-response on the travel distribution
+    Value: !Ref EdgeVersion1
