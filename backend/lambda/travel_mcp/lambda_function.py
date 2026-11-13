@@ -37,7 +37,6 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool, ToolAnnotations
 
 from io_kit_mcp_edge import BearerError, EdgeConfig, JwksUnavailable, validate_bearer, wrap
-from io_kit_mcp_edge.config import THEPUP_SHARED_CLIENT_CALLBACKS  # not re-exported at package level in 0.1.4
 from io_kit_mcp_edge.jwks import fetch_https
 
 # ---------------------------------------------------------------------------
@@ -57,12 +56,11 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 # FLY-TSK-022 (DVP-PLN-016 W2.1): Pattern B on the io-kit MCP edge. The edge fronts the
 # io-graph pool's PUBLIC PKCE client; there is no client secret anywhere in this service.
 BASE_URL = "https://travel.thepup.io"
+# The io-graph pool and its public client (from the fleet manifest); tests and the allow-list docs reference them.
 IOGRAPH_ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
 IOGRAPH_CLIENT_ID = "6eh4u69l1mqk1m4hfjspeibla8"
-# The pool runs Cognito managed login v2, which makes a code unredeemable when /oauth2/authorize carries an
-# RFC 8707 resource (DVP-PLN-016 F4b, kit KD-01). claude.ai always sends one, so the edge advertises its own
-# /authorize (authorize_redirect below), which 302s here without it. Token/revoke stay on Cognito.
-AUTH_BASE = "https://io-graph-iograph.auth.us-west-2.amazoncognito.com"
+# Sign-in is the shared service https://connect.thepup.io (fleet manifest profile "thepup"); this edge only serves
+# the protected-resource metadata and the bearer gate.
 
 # Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
 # holds other users, so pool membership grants nothing. Only subs in this
@@ -109,7 +107,8 @@ def _get_table():
 
 
 # ---------------------------------------------------------------------------
-# MCP edge (io_kit_mcp_edge): discovery, /register facade, and the bearer gate
+# MCP edge (io_kit_mcp_edge): protected-resource metadata and the bearer gate.
+# The gate covers every path, so MCP answers at /mcp (canonical) and still at / (old URL, until io reconnects).
 # ---------------------------------------------------------------------------
 
 def _fetch_jwks(uri: str) -> Dict[str, Any]:
@@ -117,24 +116,9 @@ def _fetch_jwks(uri: str) -> Dict[str, Any]:
 
 
 def _edge_config() -> EdgeConfig:
-    return EdgeConfig(
-        base_url=BASE_URL,
-        issuer=IOGRAPH_ISSUER,
-        client_id=IOGRAPH_CLIENT_ID,
-        authorization_server={
-            "authorization_endpoint": f"{AUTH_BASE}/oauth2/authorize",
-            "token_endpoint": f"{AUTH_BASE}/oauth2/token",
-            "revocation_endpoint": f"{AUTH_BASE}/oauth2/revoke",
-            "userinfo_endpoint": f"{AUTH_BASE}/oauth2/userInfo",
-        },
-        jwks_uri=f"{IOGRAPH_ISSUER}/.well-known/jwks.json",
-        mount_path="/",  # the claude.ai connector POSTs MCP to "/" (DVP-ISS-144)
-        callback_urls=list(THEPUP_SHARED_CLIENT_CALLBACKS),  # shared Cognito client lists cursor + localhost callbacks (kit 0.1.4)
-        registration_facade={"client_id": IOGRAPH_CLIENT_ID},  # E16-R1a: hands-off connect, never a secret
-        authorize_redirect={"upstream": f"{AUTH_BASE}/oauth2/authorize"},  # F4b: drop resource before Cognito
-        fetch_jwks=lambda uri: _fetch_jwks(uri),
-        logger=logger,
-    )
+    # 0.2: base URL, mount (/mcp), issuer, client id, claim profile, JWKS and the sign-in service (https://connect.thepup.io)
+    # all come from the shipped fleet manifest. The edge no longer serves /register or /authorize (they answer 401).
+    return EdgeConfig(connector="io-travel", fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger)
 
 
 _EDGE = None
@@ -157,7 +141,7 @@ def _enceladus_config() -> Optional[EdgeConfig]:
     iss = f"https://cognito-idp.{region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
     if _ENC_CFG is None or _ENC_CFG.issuer != iss or _ENC_CFG.client_id != COGNITO_CLIENT_ID:
         _ENC_CFG = EdgeConfig(
-            base_url=BASE_URL, issuer=iss, client_id=COGNITO_CLIENT_ID, authorization_server={},
+            base_url=BASE_URL, issuer=iss, client_id=COGNITO_CLIENT_ID, sign_in_service=BASE_URL,
             jwks_uri=f"{iss}/.well-known/jwks.json", mount_path="/",
             fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger,
         )
