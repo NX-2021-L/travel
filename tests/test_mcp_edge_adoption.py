@@ -107,3 +107,10 @@ def test_authorize_redirect_is_secretless_and_get_only(edge):
     assert r["statusCode"] == 302 and not any(m in (r.get("body") or "") for m in SECRET_MARKERS)
     assert _hdr(r, "location").startswith("https://io-graph-iograph.auth.us-west-2.amazoncognito.com/oauth2/authorize")
     assert _call("POST", "/authorize", body="{}")["statusCode"] == 405
+
+
+def test_register_refuses_unlisted_redirect_and_accepts_shared_client_localhost():
+    bad = _call("POST", "/register", body=json.dumps({"client_name": "x", "redirect_uris": ["https://example.invalid/cb"]}))
+    assert bad["statusCode"] == 400
+    ok = _call("POST", "/register", body=json.dumps({"client_name": "x", "redirect_uris": ["http://localhost:8787/callback"]}))
+    assert ok["statusCode"] == 201

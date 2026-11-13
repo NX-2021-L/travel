@@ -37,6 +37,7 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool, ToolAnnotations
 
 from io_kit_mcp_edge import BearerError, EdgeConfig, JwksUnavailable, validate_bearer, wrap
+from io_kit_mcp_edge.config import THEPUP_SHARED_CLIENT_CALLBACKS  # not re-exported at package level in 0.1.4
 from io_kit_mcp_edge.jwks import fetch_https
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ def _edge_config() -> EdgeConfig:
         },
         jwks_uri=f"{IOGRAPH_ISSUER}/.well-known/jwks.json",
         mount_path="/",  # the claude.ai connector POSTs MCP to "/" (DVP-ISS-144)
+        callback_urls=list(THEPUP_SHARED_CLIENT_CALLBACKS),  # shared Cognito client lists cursor + localhost callbacks (kit 0.1.4)
         registration_facade={"client_id": IOGRAPH_CLIENT_ID},  # E16-R1a: hands-off connect, never a secret
         authorize_redirect={"upstream": f"{AUTH_BASE}/oauth2/authorize"},  # F4b: drop resource before Cognito
         fetch_jwks=lambda uri: _fetch_jwks(uri),

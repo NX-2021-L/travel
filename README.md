@@ -3,7 +3,7 @@
 ## MCP auth (FLY-TSK-022, DVP-PLN-016 W2.1)
 
 `backend/lambda/travel_mcp` is fronted by `io_kit_mcp_edge` (Pattern B, the same as io-finance), installed from
-CodeArtifact `io/io-kit` (`io-kit-mcp-edge==0.1.0`, see `deploy.sh`). The edge serves the protected-resource and
+CodeArtifact `io/io-kit` (`io-kit-mcp-edge==0.1.4`, see `deploy.sh`). The edge serves the protected-resource and
 authorization-server metadata and a secretless `/register` facade, and gates every other path with a validated
 io-graph bearer token (public PKCE client `io-graph-pwa-iograph`, authorization server: the pool prefix domain, reached through the edge's `/authorize` redirect that drops `resource`, which Cognito managed login v2 cannot redeem; DVP-PLN-016 F4b).
 
