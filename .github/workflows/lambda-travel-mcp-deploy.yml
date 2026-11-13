@@ -54,3 +54,6 @@ jobs:
             --query 'Configuration.{State:State,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}'
           aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
             --query 'FunctionUrl' --output text || echo "No Function URL configured yet"
+
+      - name: Post-deploy MCP probe (DVP-TSK-L92 -- blocking; no alias, so a failure fails the run without rollback)
+        run: bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io
