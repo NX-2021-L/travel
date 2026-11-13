@@ -3,7 +3,7 @@
 ## MCP auth (FLY-TSK-022, DVP-PLN-016 W2.1)
 
 `backend/lambda/travel_mcp` is fronted by `io_kit_mcp_edge` 0.2 (`EdgeConfig(connector="io-travel")`, io-finance pattern), installed from
-CodeArtifact `io/io-kit` (`io-kit-mcp-edge==0.2.1`, see `deploy.sh`). The fleet manifest supplies the base URL, the `/mcp` mount, the issuer, the
+CodeArtifact `io/io-kit` (`io-kit-mcp-edge==0.2.2`, see `deploy.sh`). The fleet manifest supplies the base URL, the `/mcp` mount, the issuer, the
 client id and the sign-in service (`https://connect.thepup.io`). The edge serves only the protected-resource metadata (resource
 `https://travel.thepup.io/mcp`) and gates every other path with a validated io-graph bearer token. `/register`, `/authorize` and the
 authorization-server metadata belong to the sign-in service and answer 401 here. MCP answers at `/mcp` (canonical) and, until io reconnects,
