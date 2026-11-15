@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  One deployment of travel: flights table, records table, execution role, MCP function,
+  and (only for a public edge) a Function URL with its public invoke permission.
+  The same template runs every deployment; every instance-specific value is a parameter.
+
+Parameters:
+  FlightsTableName:
+    Type: String
+    Description: Name of the flights table (hash key flight_id).
+  RecordsTableName:
+    Type: String
+    Description: Name of the records table (lodging, car rental, drive, home place, correction).
+  FunctionName:
+    Type: String
+    Description: Name of the MCP server function.
+  RoleName:
+    Type: String
+    Description: Name of the function execution role.
+  PublicEdge:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: >-
+      "true" creates a public Function URL (auth NONE) and its public invoke permission.
+      "false" creates neither, so the function is reachable only through IAM.
+  CodeS3Bucket:
+    Type: String
+    Description: Bucket holding the function package.
+  CodeS3Key:
+    Type: String
+    Description: Key of the function package zip.
+  CodeS3ObjectVersion:
+    Type: String
+    Default: ""
+    Description: Optional object version, so a new package is a deliberate, visible change.
+  McpTransport:
+    Type: String
+    Default: http
+    Description: Value of the MCP_TRANSPORT environment variable.
+  CognitoUserPoolId:
+    Type: String
+    Default: ""
+  CognitoClientId:
+    Type: String
+    Default: ""
+  CognitoRegion:
+    Type: String
+    Default: ""
+  CognitoAllowedSubs:
+    Type: String
+    Default: ""
+  IographAllowedSubs:
+    Type: String
+    Default: ""
+
+Conditions:
+  IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
+  HasCodeVersion: !Not [!Equals [!Ref CodeS3ObjectVersion, ""]]
+
+Resources:
+  FlightsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref FlightsTableName
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - {AttributeName: flight_id, AttributeType: S}
+        - {AttributeName: date_yyyy_mm, AttributeType: S}
+        - {AttributeName: date_iso, AttributeType: S}
+        - {AttributeName: origin, AttributeType: S}
+        - {AttributeName: dest, AttributeType: S}
+        - {AttributeName: trip_city, AttributeType: S}
+      KeySchema:
+        - {AttributeName: flight_id, KeyType: HASH}
+      GlobalSecondaryIndexes:
+        - IndexName: date-index
+          KeySchema:
+            - {AttributeName: date_yyyy_mm, KeyType: HASH}
+            - {AttributeName: date_iso, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+        - IndexName: route-index
+          KeySchema:
+            - {AttributeName: origin, KeyType: HASH}
+            - {AttributeName: dest, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+        - IndexName: trip-city-index
+          KeySchema:
+            - {AttributeName: trip_city, KeyType: HASH}
+            - {AttributeName: date_iso, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+
+  # Single-table design for every non-flight record kind. pk is "<kind>#<id>" style, sk orders
+  # versions/corrections under it. Place identity (FLY-TSK-026-0C): place-bearing fields are
+  # stored as place_id (type:code) plus a pre-resolved area_id (city:slug), and every record
+  # carries place_resolution in exact|geocoded|unresolved. area-index answers "everything in this
+  # metro, in date order" as an equality on area_id.
+  RecordsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref RecordsTableName
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+        - {AttributeName: area_id, AttributeType: S}
+        - {AttributeName: date_iso, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      GlobalSecondaryIndexes:
+        - IndexName: area-index
+          KeySchema:
+            - {AttributeName: area_id, KeyType: HASH}
+            - {AttributeName: date_iso, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: travel-table-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt FlightsTable.Arn
+                  - !Sub "${FlightsTable.Arn}/index/*"
+                  - !GetAtt RecordsTable.Arn
+                  - !Sub "${RecordsTable.Arn}/index/*"
+
+  McpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Role: !GetAtt ExecutionRole.Arn
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+        S3ObjectVersion: !If [HasCodeVersion, !Ref CodeS3ObjectVersion, !Ref "AWS::NoValue"]
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref FlightsTable
+          RECORDS_TABLE_NAME: !Ref RecordsTable
+          MCP_TRANSPORT: !Ref McpTransport
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+          COGNITO_REGION: !Ref CognitoRegion
+          COGNITO_ALLOWED_SUBS: !Ref CognitoAllowedSubs
+          IOGRAPH_ALLOWED_SUBS: !Ref IographAllowedSubs
+
+  # Public edge only: both resources below are guarded by IsPublicEdge. An internal
+  # deployment gets no Function URL and no public invoke grant.
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Condition: IsPublicEdge
+    Properties:
+      TargetFunctionArn: !GetAtt McpFunction.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins: ["*"]
+        AllowMethods: ["*"]
+        AllowHeaders: ["*"]
+        AllowCredentials: true
+        MaxAge: 3600
+
+  FunctionUrlPublicInvoke:
+    Type: AWS::Lambda::Permission
+    Condition: IsPublicEdge
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+Outputs:
+  FlightsTableName:
+    Value: !Ref FlightsTable
+  RecordsTableName:
+    Value: !Ref RecordsTable
+  FunctionArn:
+    Value: !GetAtt McpFunction.Arn
+  FunctionUrl:
+    Condition: IsPublicEdge
+    Value: !GetAtt FunctionUrl.FunctionUrl
