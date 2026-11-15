@@ -38,6 +38,23 @@ def guard(env: dict) -> str:
     return ""
 
 
+def diff_env(current: dict, resolved: dict) -> list:
+    """Key-level plan of an environment change: [(key, 'added'|'removed'|'changed')].
+
+    Reports KEYS ONLY; values are never returned, so the result is safe to print.
+    """
+    current, resolved = current or {}, resolved or {}
+    out = []
+    for k in sorted(set(current) | set(resolved)):
+        if k not in current:
+            out.append((k, "added"))
+        elif k not in resolved:
+            out.append((k, "removed"))
+        elif current[k] != resolved[k]:
+            out.append((k, "changed"))
+    return out
+
+
 def main() -> int:
     raw = os.environ.get("CURRENT_ENV", "") or "{}"
     try:
@@ -51,6 +68,11 @@ def main() -> int:
     if msg:
         print(msg, file=sys.stderr)
         return 3
+    if "--plan" in sys.argv[1:]:
+        # Dry-run: print key + marker only (never values); change nothing.
+        for k, marker in diff_env(current, env):
+            print(f"  {marker:8s} {k}")
+        return 0
     print(json.dumps({"Variables": env}))
     return 0
 

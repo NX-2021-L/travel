@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# id-token is used ONLY to fetch a read-only CodeArtifact token for the private
+# io-kit-mcp-edge package (the lambda cannot even be imported without it). The tests
+# themselves are hermetic: moto, local fixtures, no live table, no deploy.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure AWS credentials (OIDC, package read only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - name: Install test requirements
+        run: |
+          TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
+          echo "::add-mask::${TOKEN}"
+          pip install -r tests/requirements.txt \
+            --extra-index-url "https://aws:${TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" --quiet
+      - name: pytest
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+          AWS_SESSION_TOKEN: testing
+        run: pytest tests/
+      - name: Caps snapshot drift check
+        run: python3 scripts/emit_caps.py --check

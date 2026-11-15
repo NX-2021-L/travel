@@ -1,5 +1,11 @@
 name: Lambda Deploy - travel-mcp
 
+# Deploy path (FLY-TSK-027-0A): plan -> apply -> verify -> undo.
+# There is NO alias: CloudFront fronts the unqualified Function URL, so $LATEST serves live
+# traffic. The way back is a version restore onto $LATEST (scripts/release_ops.py restore),
+# which needs only permissions the deploy role holds.
+# The `paths:` filter below is asserted by tests/test_release_ops.py -- do not broaden it.
+
 on:
   push:
     branches: [main]
@@ -8,19 +14,36 @@ on:
       - ".github/workflows/lambda-travel-mcp-deploy.yml"
   workflow_dispatch:
     inputs:
-      reason:
-        description: "Why this deploy is being triggered"
+      action:
+        description: "deploy = plan/apply/verify/undo; rollback = restore a published version onto $LATEST, nothing else"
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      rollback_to_version:
+        description: "rollback only: published version number to restore (blank = the previous release, i.e. the highest published version)"
         type: string
         required: false
-        default: "manual deploy"
+        default: ""
+      force_verify_fail:
+        description: "DRILL: make one verify check fail on purpose so the automatic undo runs"
+        type: boolean
+        default: false
+      reason:
+        description: "Why this run is being triggered"
+        type: string
+        required: false
+        default: "manual run"
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  deploy:
+  release:
+    if: github.event_name == 'push' || inputs.action != 'rollback'
     runs-on: ubuntu-latest
+    env:
+      FORCE_VERIFY_FAIL: ${{ inputs.force_verify_fail && 'true' || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +59,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Deploy Lambda
+      - name: Plan (read-only; changes nothing)
+        env:
+          TABLE_NAME: io-travel-flights
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
+          COGNITO_REGION: us-east-1
+        run: python3 scripts/release_ops.py plan
+
+      - name: Apply - publish restore point, then deploy
+        id: apply
         env:
           TABLE_NAME: io-travel-flights
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
@@ -46,14 +78,75 @@ jobs:
           COGNITO_REGION: us-east-1
           MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
           SERVER_BASE_URL: ${{ secrets.SERVER_BASE_URL }}
-        run: bash backend/lambda/travel_mcp/deploy.sh
-
-      - name: Verify deployment
         run: |
-          aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
-            --query 'Configuration.{State:State,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}'
-          aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
-            --query 'FunctionUrl' --output text || echo "No Function URL configured yet"
+          # A version snapshots code AND environment at publish time, so publishing BEFORE
+          # deploy.sh captures the OLD release -- the restore point.
+          PRE=$(aws lambda publish-version --function-name io-travel-mcp-server --region us-west-2 \
+                  --description "restore point before ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})" \
+                  --query Version --output text)
+          echo "restore point: version ${PRE}"
+          echo "pre_deploy_version=${PRE}" >> "$GITHUB_OUTPUT"
+          bash backend/lambda/travel_mcp/deploy.sh
 
-      - name: Post-deploy MCP probe (DVP-TSK-L92 -- blocking; no alias, so a failure fails the run without rollback)
+      - name: Verify (read-only, production)
+        id: verify
+        continue-on-error: true
+        run: |
+          fail=0
+          bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io || { echo "CHECK FAILED: mcp probe"; fail=1; }
+          aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
+            --query 'Configuration.{State:State,LastUpdateStatus:LastUpdateStatus,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}' || fail=1
+          STATE=$(aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
+            --query 'Configuration.[State,LastUpdateStatus]' --output text | tr -s '[:space:]' ' ')
+          [ "$STATE" = "Active Successful " ] || [ "$STATE" = "Active Successful" ] || { echo "CHECK FAILED: function state ($STATE)"; fail=1; }
+          aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
+            --query 'FunctionUrl' --output text >/dev/null || { echo "CHECK FAILED: function url config"; fail=1; }
+          python3 scripts/emit_caps.py --check || { echo "CHECK FAILED: emit_caps --check"; fail=1; }
+          if [ "${FORCE_VERIFY_FAIL}" = "true" ]; then
+            echo "CHECK FAILED: forced (FORCE_VERIFY_FAIL drill)"; fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo "failed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Undo - restore previous release (automatic, on verify failure)
+        id: undo
+        if: steps.verify.outcome == 'failure'
+        run: |
+          VER="${{ steps.apply.outputs.pre_deploy_version }}"
+          echo "verify failed at ${{ steps.verify.outputs.failed_at }}; restoring version ${VER}"
+          python3 scripts/release_ops.py restore --version "${VER}"
+          bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io
+          END=$(date +%s)
+          TTR=$(( END - ${{ steps.verify.outputs.failed_at }} ))
+          echo "time_to_recover_seconds=${TTR}" >> "$GITHUB_OUTPUT"
+          echo "RECOVERED: probe passing again ${TTR}s after the verify failure"
+          echo "### Undo: restored version ${VER}; time to recover ${TTR}s" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail the run if verify failed (the failure stays visible)
+        if: steps.verify.outcome == 'failure'
+        run: |
+          echo "verify failed; function restored to the previous release (see Undo step)"
+          exit 1
+
+  rollback:
+    # One action by a person: Run workflow -> action=rollback. Does step 4 alone.
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Undo - restore version onto $LATEST
+        run: python3 scripts/release_ops.py restore --version "${{ inputs.rollback_to_version }}"
+      - name: Probe the restored function
         run: bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io
