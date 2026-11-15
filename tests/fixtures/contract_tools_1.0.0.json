@@ -1,0 +1,637 @@
+{
+  "annotations": {
+    "answer_trip_question": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "cancel_car_rental": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "cancel_drive": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "cancel_lodging": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "create_car_rental": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "create_drive": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "create_lodging": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "get_home_places": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "get_travel_record": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "get_trip": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "list_trips": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "list_undecided_trips": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "record_trip_correction": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "retire_trip_correction": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "search_travel_records": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "set_home_places": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "update_car_rental": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "update_drive": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "update_lodging": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    }
+  },
+  "lanes": {
+    "answer_trip_question": "3B",
+    "cancel_car_rental": "2A",
+    "cancel_drive": "2A",
+    "cancel_lodging": "2A",
+    "create_car_rental": "2A",
+    "create_drive": "2A",
+    "create_lodging": "2A",
+    "get_home_places": "2B",
+    "get_travel_record": "2A",
+    "get_trip": "3A",
+    "list_trips": "3A",
+    "list_undecided_trips": "3B",
+    "record_trip_correction": "2E",
+    "retire_trip_correction": "2E",
+    "search_travel_records": "2A",
+    "set_home_places": "2B",
+    "update_car_rental": "2A",
+    "update_drive": "2A",
+    "update_lodging": "2A"
+  },
+  "new_tool_descriptions": {
+    "answer_trip_question": "Pass back the chosen answer to a prepared question; shows the correction it writes (dry_run), then writes it.",
+    "cancel_car_rental": "Cancel a car rental softly. Idempotent. No hard deletes.",
+    "cancel_drive": "Cancel a drive softly. Idempotent. No hard deletes.",
+    "cancel_lodging": "Cancel a lodging softly. Idempotent. No hard deletes.",
+    "create_car_rental": "Create a car rental record. Rejects duplicates on the natural key.",
+    "create_drive": "Create a drive record. Rejects duplicates on the natural key.",
+    "create_lodging": "Create a lodging record. Rejects duplicates on the natural key.",
+    "get_home_places": "Get the home places for one residence, or for all residences.",
+    "get_travel_record": "Get one lodging, car rental or drive record by id.",
+    "get_trip": "Get one trip, with the rule behind each boundary.",
+    "list_trips": "List trips: under way, then upcoming, then past (newest first).",
+    "list_undecided_trips": "List trips with an open flag or signal, each with one prepared question and its answers.",
+    "record_trip_correction": "Record a correction in free form, for a case the prepared answers miss.",
+    "retire_trip_correction": "Retire a correction, reopening what it closed. Never deletes.",
+    "search_travel_records": "Search lodging, car rental and drive records. Paginated.",
+    "set_home_places": "Set the places that count as leaving a residence (airports by code, cities).",
+    "update_car_rental": "Update mutable fields of a car rental; identity fields (pickup_date, pickup_place, company, confirmation_code) cannot change: cancel and record again.",
+    "update_drive": "Update mutable fields of a drive; identity fields (date, origin, destination, sequence) cannot change: cancel and record again.",
+    "update_lodging": "Update mutable fields of a lodging; identity fields (first_night, name, city, state, country) cannot change: cancel and record again."
+  },
+  "new_tool_schemas": {
+    "answer_trip_question": {
+      "properties": {
+        "answer_id": {
+          "type": "string"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "session": {
+          "description": "Optional agent session id, recorded in the author stamp",
+          "type": "string"
+        },
+        "trip_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "trip_key",
+        "question_id",
+        "answer_id"
+      ],
+      "type": "object"
+    },
+    "cancel_car_rental": {
+      "properties": {
+        "car_rental_id": {
+          "description": "The car rental record id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "car_rental_id"
+      ],
+      "type": "object"
+    },
+    "cancel_drive": {
+      "properties": {
+        "drive_id": {
+          "description": "The drive record id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "drive_id"
+      ],
+      "type": "object"
+    },
+    "cancel_lodging": {
+      "properties": {
+        "lodging_id": {
+          "description": "The lodging record id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lodging_id"
+      ],
+      "type": "object"
+    },
+    "create_car_rental": {
+      "properties": {
+        "company": {
+          "type": "string"
+        },
+        "confirmation_code": {
+          "type": "string"
+        },
+        "dropoff_date": {
+          "description": "ISO date",
+          "type": "string"
+        },
+        "dropoff_place": {
+          "type": "string"
+        },
+        "pickup_date": {
+          "description": "ISO date",
+          "type": "string"
+        },
+        "pickup_place": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "company",
+        "pickup_place",
+        "pickup_date"
+      ],
+      "type": "object"
+    },
+    "create_drive": {
+      "properties": {
+        "date": {
+          "description": "ISO date",
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "means": {
+          "description": "Means of travel",
+          "enum": [
+            "road"
+          ],
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Order within the day",
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "via": {
+          "description": "Places passed through",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "date",
+        "origin",
+        "destination"
+      ],
+      "type": "object"
+    },
+    "create_lodging": {
+      "properties": {
+        "address": {
+          "description": "Street address; stored as given, never parsed",
+          "type": "string"
+        },
+        "city": {
+          "description": "City",
+          "type": "string"
+        },
+        "confirmation_code": {
+          "type": "string"
+        },
+        "country": {
+          "description": "Country",
+          "type": "string"
+        },
+        "first_night": {
+          "description": "First night (ISO date); nights are inclusive",
+          "type": "string"
+        },
+        "last_night": {
+          "description": "Last night (ISO date)",
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "name": {
+          "description": "Property name",
+          "type": "string"
+        },
+        "place_label": {
+          "description": "Place as booked",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the record came from",
+          "type": "string"
+        },
+        "state": {
+          "description": "State or region",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "city",
+        "state",
+        "country",
+        "first_night",
+        "last_night"
+      ],
+      "type": "object"
+    },
+    "get_home_places": {
+      "properties": {
+        "residence_uid": {
+          "description": "Residence period id; omit for all",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "get_travel_record": {
+      "properties": {
+        "record_id": {
+          "description": "A lodging-, car_rental- or drive- record id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_id"
+      ],
+      "type": "object"
+    },
+    "get_trip": {
+      "properties": {
+        "trip_key": {
+          "description": "The id of the trip's first record",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trip_key"
+      ],
+      "type": "object"
+    },
+    "list_trips": {
+      "properties": {
+        "date_from": {
+          "description": "Start date (ISO 8601)",
+          "type": "string"
+        },
+        "date_to": {
+          "description": "End date (ISO 8601), inclusive",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "list_undecided_trips": {
+      "properties": {
+        "date_from": {
+          "description": "Start date (ISO 8601)",
+          "type": "string"
+        },
+        "date_to": {
+          "description": "End date (ISO 8601), inclusive",
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "record_trip_correction": {
+      "properties": {
+        "date": {
+          "description": "ISO date; required for returned and left",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "returned",
+            "left",
+            "together",
+            "leave_out"
+          ],
+          "type": "string"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "record_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "session": {
+          "description": "Optional agent session id, recorded in the author stamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "record_ids"
+      ],
+      "type": "object"
+    },
+    "retire_trip_correction": {
+      "properties": {
+        "correction_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "session": {
+          "description": "Optional agent session id, recorded in the author stamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "correction_id"
+      ],
+      "type": "object"
+    },
+    "search_travel_records": {
+      "properties": {
+        "area_id": {
+          "description": "Metro id, city:<slug>",
+          "type": "string"
+        },
+        "date_from": {
+          "description": "Start date (ISO 8601)",
+          "type": "string"
+        },
+        "date_to": {
+          "description": "End date (ISO 8601), inclusive",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "lodging",
+            "car_rental",
+            "drive"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "next_token": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "set_home_places": {
+      "properties": {
+        "places": {
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "place_id": {
+                "description": "type:code, type in apt|stn|city|addr",
+                "pattern": "^(apt|stn|city|addr):[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              "radius_km": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "place_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "residence_uid": {
+          "type": "string"
+        },
+        "valid_from": {
+          "type": "string"
+        },
+        "valid_to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "residence_uid",
+        "places"
+      ],
+      "type": "object"
+    },
+    "update_car_rental": {
+      "properties": {
+        "car_rental_id": {
+          "description": "The car rental record id",
+          "type": "string"
+        },
+        "dropoff_date": {
+          "description": "ISO date",
+          "type": "string"
+        },
+        "dropoff_place": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "car_rental_id"
+      ],
+      "type": "object"
+    },
+    "update_drive": {
+      "properties": {
+        "drive_id": {
+          "description": "The drive record id",
+          "type": "string"
+        },
+        "means": {
+          "description": "Means of travel",
+          "enum": [
+            "road"
+          ],
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "via": {
+          "description": "Places passed through",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "drive_id"
+      ],
+      "type": "object"
+    },
+    "update_lodging": {
+      "properties": {
+        "address": {
+          "description": "Street address; stored as given, never parsed",
+          "type": "string"
+        },
+        "confirmation_code": {
+          "type": "string"
+        },
+        "last_night": {
+          "description": "Last night (ISO date)",
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lodging_id": {
+          "description": "The lodging record id",
+          "type": "string"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "place_label": {
+          "description": "Place as booked",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the record came from",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lodging_id"
+      ],
+      "type": "object"
+    }
+  }
+}

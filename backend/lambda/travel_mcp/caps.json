@@ -300,9 +300,854 @@
       "requiresGovernanceHash": false,
       "title": "Cancel Flight",
       "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "address": {
+            "description": "Street address; stored as given, never parsed",
+            "type": "string"
+          },
+          "city": {
+            "description": "City",
+            "type": "string"
+          },
+          "confirmation_code": {
+            "type": "string"
+          },
+          "country": {
+            "description": "Country",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "first_night": {
+            "description": "First night (ISO date); nights are inclusive",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "last_night": {
+            "description": "Last night (ISO date)",
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "name": {
+            "description": "Property name",
+            "type": "string"
+          },
+          "place_label": {
+            "description": "Place as booked",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the record came from",
+            "type": "string"
+          },
+          "state": {
+            "description": "State or region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "city",
+          "state",
+          "country",
+          "first_night",
+          "last_night"
+        ],
+        "type": "object"
+      },
+      "name": "create_lodging",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Create Lodging",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "address": {
+            "description": "Street address; stored as given, never parsed",
+            "type": "string"
+          },
+          "confirmation_code": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "last_night": {
+            "description": "Last night (ISO date)",
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lodging_id": {
+            "description": "The lodging record id",
+            "type": "string"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "place_label": {
+            "description": "Place as booked",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the record came from",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lodging_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_lodging",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Update Lodging",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "lodging_id": {
+            "description": "The lodging record id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lodging_id"
+        ],
+        "type": "object"
+      },
+      "name": "cancel_lodging",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Cancel Lodging",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "confirmation_code": {
+            "type": "string"
+          },
+          "dropoff_date": {
+            "description": "ISO date",
+            "type": "string"
+          },
+          "dropoff_place": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "pickup_date": {
+            "description": "ISO date",
+            "type": "string"
+          },
+          "pickup_place": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "company",
+          "pickup_place",
+          "pickup_date"
+        ],
+        "type": "object"
+      },
+      "name": "create_car_rental",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Create Car Rental",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "car_rental_id": {
+            "description": "The car rental record id",
+            "type": "string"
+          },
+          "dropoff_date": {
+            "description": "ISO date",
+            "type": "string"
+          },
+          "dropoff_place": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "car_rental_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_car_rental",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Update Car Rental",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "car_rental_id": {
+            "description": "The car rental record id",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "car_rental_id"
+        ],
+        "type": "object"
+      },
+      "name": "cancel_car_rental",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Cancel Car Rental",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "date": {
+            "description": "ISO date",
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "means": {
+            "description": "Means of travel",
+            "enum": [
+              "road"
+            ],
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "sequence": {
+            "description": "Order within the day",
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "via": {
+            "description": "Places passed through",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "date",
+          "origin",
+          "destination"
+        ],
+        "type": "object"
+      },
+      "name": "create_drive",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Create Drive",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "drive_id": {
+            "description": "The drive record id",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "means": {
+            "description": "Means of travel",
+            "enum": [
+              "road"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "via": {
+            "description": "Places passed through",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "drive_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_drive",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Update Drive",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "drive_id": {
+            "description": "The drive record id",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "drive_id"
+        ],
+        "type": "object"
+      },
+      "name": "cancel_drive",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Cancel Drive",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "record_id": {
+            "description": "A lodging-, car_rental- or drive- record id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_travel_record",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Get Travel Record",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "area_id": {
+            "description": "Metro id, city:<slug>",
+            "type": "string"
+          },
+          "date_from": {
+            "description": "Start date (ISO 8601)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (ISO 8601), inclusive",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "lodging",
+              "car_rental",
+              "drive"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "next_token": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "search_travel_records",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Search Travel Records",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "residence_uid": {
+            "description": "Residence period id; omit for all",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_home_places",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Get Home Places",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "places": {
+            "items": {
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "place_id": {
+                  "description": "type:code, type in apt|stn|city|addr",
+                  "pattern": "^(apt|stn|city|addr):[A-Za-z0-9._-]+$",
+                  "type": "string"
+                },
+                "radius_km": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "place_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "residence_uid": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string"
+          },
+          "valid_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "residence_uid",
+          "places"
+        ],
+        "type": "object"
+      },
+      "name": "set_home_places",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Set Home Places",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (ISO 8601)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (ISO 8601), inclusive",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_trips",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "List Trips",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "trip_key": {
+            "description": "The id of the trip's first record",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trip_key"
+        ],
+        "type": "object"
+      },
+      "name": "get_trip",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Get Trip",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "dryRun": false,
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (ISO 8601)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (ISO 8601), inclusive",
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_undecided_trips",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "List Undecided Trips",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "answer_id": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "question_id": {
+            "type": "string"
+          },
+          "session": {
+            "description": "Optional agent session id, recorded in the author stamp",
+            "type": "string"
+          },
+          "trip_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trip_key",
+          "question_id",
+          "answer_id"
+        ],
+        "type": "object"
+      },
+      "name": "answer_trip_question",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Answer Trip Question",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "date": {
+            "description": "ISO date; required for returned and left",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "returned",
+              "left",
+              "together",
+              "leave_out"
+            ],
+            "type": "string"
+          },
+          "question_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "record_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "session": {
+            "description": "Optional agent session id, recorded in the author stamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "record_ids"
+        ],
+        "type": "object"
+      },
+      "name": "record_trip_correction",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Record Trip Correction",
+      "via": "top-level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "dryRun": true,
+      "inputSchema": {
+        "properties": {
+          "correction_id": {
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "session": {
+            "description": "Optional agent session id, recorded in the author stamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "correction_id"
+        ],
+        "type": "object"
+      },
+      "name": "retire_trip_correction",
+      "outputSchema": null,
+      "requiresGovernanceHash": false,
+      "title": "Retire Trip Correction",
+      "via": "top-level"
     }
   ],
-  "generatedAt": "2026-10-10T15:54:53Z",
+  "generatedAt": "2026-11-15T23:50:45Z",
   "schemaVersion": "1.1.0",
   "surface": "io-travel"
 }

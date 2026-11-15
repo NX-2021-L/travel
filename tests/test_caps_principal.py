@@ -18,7 +18,8 @@ import lambda_function as lf  # noqa: E402
 def test_caps_has_five_actions_with_annotations():
     caps = lf.build_caps()
     assert caps["schemaVersion"] == "1.1.0" and caps["surface"] == "io-travel" and caps["generatedAt"]
-    assert len(caps["actions"]) == 5
+    # FLY-TSK-028-0A: caps now carry the contract's 24; the five flight tools are still there (pinned in test_contract.py)
+    assert [a["name"] for a in caps["actions"]][:5] == list(lf.contract.FLIGHT_TOOLS)
     for a in caps["actions"]:
         assert set(a) == {"name", "title", "inputSchema", "outputSchema", "annotations",
                           "requiresGovernanceHash", "via", "dryRun"}
@@ -119,6 +120,6 @@ def test_caps_route_served(monkeypatch):
     monkeypatch.setenv("IOGRAPH_ALLOWED_SUBS", "s1")
     ev = _edge_event("/caps.json", "s1")
     resp = asyncio.run(lf._handle_lambda_event(ev))
-    assert resp["statusCode"] == 200 and len(json.loads(resp["body"])["actions"]) == 5
+    assert resp["statusCode"] == 200 and len(json.loads(resp["body"])["actions"]) == len(lf.contract.TOOL_NAMES)
     ev["requestContext"]["http"]["path"] = "/permission-manifest.json"
     assert json.loads(asyncio.run(lf._handle_lambda_event(ev))["body"])["tools"]["create_flight"]["access"] == "write"
