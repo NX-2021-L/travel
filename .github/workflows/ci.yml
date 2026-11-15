@@ -20,13 +20,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The deploy role's trust policy admits refs/heads/main only, so on pull_request this
+      # step cannot assume it. CI then degrades to the tests that do not import the private
+      # package (reported loudly) instead of going red or silently skipping. On push to main
+      # the full suite runs. Widening the trust to pull_request is an IAM change for io.
       - name: Configure AWS credentials (OIDC, package read only)
+        id: aws
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
           aws-region: us-west-2
-      - name: Install test requirements
+      - name: Install test requirements (limited set when the private package is unreachable)
         run: |
+          if [ "${{ steps.aws.outcome }}" != "success" ]; then
+            echo "::warning::CI LIMITED: cannot assume the AWS role on this ref (trust policy); running only tests that do not import io-kit-mcp-edge"
+            pip install pytest PyYAML --quiet
+            exit 0
+          fi
           TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
           echo "::add-mask::${TOKEN}"
           pip install -r tests/requirements.txt \
@@ -36,6 +47,8 @@ jobs:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
           AWS_SESSION_TOKEN: testing
-        run: pytest tests/
+        run: |
+          if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py; fi
       - name: Caps snapshot drift check
+        if: steps.aws.outcome == 'success'
         run: python3 scripts/emit_caps.py --check
