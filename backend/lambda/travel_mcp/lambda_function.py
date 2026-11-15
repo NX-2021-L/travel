@@ -238,6 +238,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+try:  # the contract ships beside this file; see deploy.sh (it must copy every module, not only this one)
+    import contract
+except ImportError:  # pragma: no cover - a package that omitted contract.py serves the five flight tools only
+    contract = None
+    logging.getLogger().error("contract.py missing from the package: serving the five flight tools only")
+
+
 MUTABLE_FIELDS = {
     "cost_type", "trip_city", "booked_class", "confirmation_code",
     "base_fare", "extra_fees", "total_paid", "funding_source",
@@ -727,6 +734,38 @@ _TOOL_HANDLERS = {
 }
 
 
+def _not_implemented(name: str, lane: str):
+    async def handler(arguments: dict) -> list:
+        return _error("not_implemented", f"{name} is registered by the contract (FLY-TSK-028-0A) but not implemented in this lane; lane {lane} implements it.",
+                      status=501)
+    return handler
+
+
+def _register_contract_handlers() -> None:
+    """Register the contract's new tools: a structured not_implemented stub each, then any lane module's HANDLERS.
+
+    A lane adds travel_mcp/<contract.LANE_MODULES[lane]>.py exposing HANDLERS = {tool: async handler}; no edit here.
+    """
+    if contract is None:
+        return
+    import importlib
+    for name, lane in contract.TOOL_LANES.items():
+        _TOOL_HANDLERS[name] = _not_implemented(name, lane)
+    for lane, module_name in contract.LANE_MODULES.items():
+        try:
+            mod = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+            continue
+        for name, handler in getattr(mod, "HANDLERS", {}).items():
+            if name in contract.TOOL_LANES:
+                _TOOL_HANDLERS[name] = handler
+
+
+_register_contract_handlers()
+
+
 def _base_tools() -> list[Tool]:
     return [
         Tool(
@@ -820,6 +859,16 @@ def _base_tools() -> list[Tool]:
                 "required": ["flight_id"],
             },
         ),
+    ] + _contract_tools()
+
+
+def _contract_tools() -> list[Tool]:
+    if contract is None:
+        return []
+    return [
+        Tool(name=n, description=contract.NEW_TOOL_DESCRIPTIONS[n],
+             inputSchema=json.loads(json.dumps(contract.NEW_TOOL_SCHEMAS[n])))
+        for n in contract.NEW_TOOL_NAMES
     ]
 
 
@@ -828,6 +877,8 @@ def _base_tools() -> list[Tool]:
 # ---------------------------------------------------------------------------
 
 WRITE_TOOLS = ("create_flight", "update_flight", "cancel_flight")
+if contract is not None:
+    WRITE_TOOLS = WRITE_TOOLS + contract.NEW_WRITE_TOOLS
 
 _ANNOTATIONS = {
     "search_flights": dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
@@ -836,6 +887,9 @@ _ANNOTATIONS = {
     "update_flight": dict(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     "cancel_flight": dict(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False),
 }
+
+if contract is not None:
+    _ANNOTATIONS.update({n: dict(a) for n, a in contract.NEW_TOOL_ANNOTATIONS.items()})
 
 # JSON Pointers into the tool result (the {"success","result"} envelope) minted server-side.
 _X_IO_MINTED = {"create_flight": ["/result/flight_id", "/result/created_at"]}

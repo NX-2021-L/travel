@@ -16,19 +16,76 @@
   },
   "surface": "io-travel",
   "tools": {
+    "answer_trip_question": {
+      "access": "write"
+    },
+    "cancel_car_rental": {
+      "access": "write"
+    },
+    "cancel_drive": {
+      "access": "write"
+    },
     "cancel_flight": {
+      "access": "write"
+    },
+    "cancel_lodging": {
+      "access": "write"
+    },
+    "create_car_rental": {
+      "access": "write"
+    },
+    "create_drive": {
       "access": "write"
     },
     "create_flight": {
       "access": "write"
     },
+    "create_lodging": {
+      "access": "write"
+    },
     "get_flight": {
       "access": "read"
+    },
+    "get_home_places": {
+      "access": "read"
+    },
+    "get_travel_record": {
+      "access": "read"
+    },
+    "get_trip": {
+      "access": "read"
+    },
+    "list_trips": {
+      "access": "read"
+    },
+    "list_undecided_trips": {
+      "access": "read"
+    },
+    "record_trip_correction": {
+      "access": "write"
+    },
+    "retire_trip_correction": {
+      "access": "write"
     },
     "search_flights": {
       "access": "read"
     },
+    "search_travel_records": {
+      "access": "read"
+    },
+    "set_home_places": {
+      "access": "write"
+    },
+    "update_car_rental": {
+      "access": "write"
+    },
+    "update_drive": {
+      "access": "write"
+    },
     "update_flight": {
+      "access": "write"
+    },
+    "update_lodging": {
       "access": "write"
     }
   },
