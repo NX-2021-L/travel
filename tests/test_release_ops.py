@@ -63,3 +63,7 @@ def test_deploy_path_has_four_steps_in_order():
     assert idx["Plan"] < idx["Apply"] < idx["Verify"] < idx["Undo"]
     assert "rollback_to_version" in ON["workflow_dispatch"]["inputs"]
     assert "force_verify_fail" in ON["workflow_dispatch"]["inputs"]
+
+
+def test_deploys_are_serialized_and_never_cancelled():
+    assert WF["concurrency"] == {"group": "travel-mcp-deploy", "cancel-in-progress": False}

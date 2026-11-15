@@ -38,6 +38,13 @@ permissions:
   contents: read
   id-token: write
 
+# One run at a time against the function: a push deploy, a drill and a rollback must not
+# interleave (they would publish and restore from each other's restore points). Queue, never
+# cancel -- an in-flight deploy or restore must always finish.
+concurrency:
+  group: travel-mcp-deploy
+  cancel-in-progress: false
+
 jobs:
   release:
     if: github.event_name == 'push' || inputs.action != 'rollback'
