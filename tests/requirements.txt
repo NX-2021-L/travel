@@ -1,3 +1,4 @@
 pytest
 moto[dynamodb]>=5
 -r ../backend/lambda/travel_mcp/requirements.txt
+PyYAML
