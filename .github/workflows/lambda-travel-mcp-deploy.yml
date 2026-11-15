@@ -88,6 +88,13 @@ jobs:
           echo "pre_deploy_version=${PRE}" >> "$GITHUB_OUTPUT"
           bash backend/lambda/travel_mcp/deploy.sh
 
+      - name: Install check dependencies (emit_caps imports the lambda, which needs io-kit-mcp-edge)
+        run: |
+          TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
+          echo "::add-mask::${TOKEN}"
+          pip install -r backend/lambda/travel_mcp/requirements.txt \
+            --extra-index-url "https://aws:${TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" --quiet
+
       - name: Verify (read-only, production)
         id: verify
         continue-on-error: true
