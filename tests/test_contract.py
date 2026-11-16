@@ -81,11 +81,11 @@ def test_record_kinds():
     assert {"city", "state", "country"} <= set(c.RECORD_KINDS["lodging"]["required"])
     assert c.RECORD_KINDS["correction"]["fields"] == [
         "kind", "date", "record_ids", "reason", "author", "session", "question_id", "status",
-        "created_at", "retired_at", "retired_by"]
+        "created_at", "retired_at", "retired_by", "first_date", "last_date", "method", "supersedes"]
     for k, spec in c.RECORD_KINDS.items():  # identity fields are immutable
         assert not set(spec["mutable"]) & set(spec["natural_key"]), k
     assert c.STATUSES == ("active", "cancelled") and c.CORRECTION_STATUSES == ("active", "retired")
-    assert c.CORRECTION_KINDS == ("returned", "left", "together", "leave_out") and c.DRIVE_MEANS == ("road",)
+    assert c.CORRECTION_KINDS == ("returned", "left", "together", "leave_out", "confirmed") and c.DRIVE_MEANS == ("road",)
 
 
 def test_place_identity_fields():
@@ -136,7 +136,8 @@ def test_vocabularies():
     assert c.DISPOSITIONS == ("cancelled", "left_out", "unreadable", "at_home", "a_move", "day_out_and_back")
     assert not hasattr(c, "BASIS")  # the name is BASES
     assert c.TRIP_FIELDS == ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited",
-                             "legs", "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections"]
+                             "legs", "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
+    assert c.ARCS == ("detected", "proposed", "confirmed") and c.CONFIRMATION_METHODS == ("examined", "accepted_list")
     assert c.GET_TRIP_EXTRA_FIELDS == ["first_rule", "last_rule"]
 
 

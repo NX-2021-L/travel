@@ -325,9 +325,15 @@ def test_every_refusal_is_a_contract_error_code(world):
 
 
 def test_the_engine_would_report_what_the_validation_prevents(world):
-    """2E alone writes a correction naming an absent record; the engine can only call it unapplied. 3B refuses first."""
-    call("record_trip_correction", {"kind": "returned", "date": "2024-03-06", "record_ids": ["no-such-flight"]})
-    res = te.compute_trips(OPEN, ENGINE_HOME, today=TODAY, home_places=[home_places()], corrections=lane2e.engine_corrections(world.records))
+    """The write refuses an absent record (invalid, dry run too, nothing written); the engine still calls such a correction
+    unapplied should one exist (a record removed after the correction was written)."""
+    before = rows(world)
+    for dry in (True, False):
+        out = call("record_trip_correction", {"kind": "returned", "date": "2024-03-06", "record_ids": ["no-such-flight"], "dry_run": dry})
+        assert out["success"] is False and out["error_envelope"]["code"] == "invalid" and "no-such-flight" in out["error"]
+    assert rows(world) == before
+    corr = {"correction_id": "correction-x", "kind": "returned", "date": "2024-03-06", "record_ids": ["no-such-flight"], "status": "active"}
+    res = te.compute_trips(OPEN, ENGINE_HOME, today=TODAY, home_places=[home_places()], corrections=[corr])
     assert [u["record_ids"] for u in res["unapplied_corrections"]] == [["no-such-flight"]]
 
 

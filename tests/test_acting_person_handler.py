@@ -45,7 +45,7 @@ CAR = {"company": "Hertz", "pickup_place": "SEA airport", "pickup_date": "2026-0
        "dropoff_date": "2026-06-04", "confirmation_code": "H123"}
 DRIVE = {"date": "2026-06-02", "origin": "Seattle", "destination": "Portland", "sequence": 1}
 SEA = {"place_id": "apt:SEA", "area_id": "city:seattle-wa-us", "label": "Sea-Tac", "lat": 47.45, "lon": -122.31, "radius_km": 60}
-CORR = {"kind": "leave_out", "record_ids": ["drive-9"], "reason": "not my travel"}
+CORR = {"kind": "leave_out", "record_ids": ["fl-9"], "reason": "not my travel"}
 WHO = {"acting_principal": "nana", "session": "sess-event"}
 
 
@@ -124,6 +124,7 @@ def test_set_home_places_stamps_the_person(internal):
 
 
 def test_corrections_stamp_author_and_retired_by_and_sessions(internal):
+    boto3.resource("dynamodb", region_name="us-west-2").Table("io-travel-flights").put_item(Item={"flight_id": "fl-9"})  # a correction names a record that exists
     rec = run(direct("record_trip_correction", CORR, **WHO))
     assert rec["success"] is True, rec
     (item,) = rows(internal)

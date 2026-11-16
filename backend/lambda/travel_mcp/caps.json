@@ -1064,6 +1064,10 @@
             "description": "Resolve and preview the call (ResolvedCall v1) without writing anything",
             "type": "boolean"
           },
+          "first_date": {
+            "description": "ISO date; kind confirmed only",
+            "type": "string"
+          },
           "idempotency_key": {
             "description": "Idempotency key echoed in the resolved call and audit log (or send the Idempotency-Key header)",
             "type": "string"
@@ -1073,7 +1077,20 @@
               "returned",
               "left",
               "together",
-              "leave_out"
+              "leave_out",
+              "confirmed"
+            ],
+            "type": "string"
+          },
+          "last_date": {
+            "description": "ISO date; kind confirmed only",
+            "type": "string"
+          },
+          "method": {
+            "description": "kind confirmed only",
+            "enum": [
+              "examined",
+              "accepted_list"
             ],
             "type": "string"
           },
@@ -1092,6 +1109,13 @@
           "session": {
             "description": "Optional agent session id, recorded in the author stamp",
             "type": "string"
+          },
+          "supersedes": {
+            "description": "kind confirmed only: confirmation ids this one replaces",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [

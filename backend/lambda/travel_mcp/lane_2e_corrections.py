@@ -32,6 +32,7 @@ import contract
 import settings as _settings
 
 RECORD_KIND = "correction"
+_HELD_KINDS = ("lodging", "car_rental", "drive")  # the records-table kinds the trip engine reads
 TABLE_ENV = "RECORDS_TABLE_NAME"
 
 
@@ -70,14 +71,21 @@ def _unreachable(exc):
 
 
 # --------------------------------------------------------------------------- the engine-facing surface
+_CONFIRMED_ONLY = ("first_date", "last_date", "method", "supersedes")
+
+
 def _present(item):
-    return {
+    out = {
         "correction_id": item.get("record_id"), "kind": item.get("correction_kind"), "date": item.get("date"),
         "record_ids": list(item.get("record_ids") or []), "reason": item.get("reason"),
         "author": item.get("author"), "session": item.get("session"), "question_id": item.get("question_id"),
         "status": item.get("status"), "created_at": item.get("created_at"),
         "retired_at": item.get("retired_at"), "retired_by": item.get("retired_by"),
     }
+    if item.get("correction_kind") == "confirmed":  # the four fields of a confirmation; other kinds keep their shape
+        out.update(first_date=item.get("first_date"), last_date=item.get("last_date"), method=item.get("method"),
+                   supersedes=sorted(item.get("supersedes") or []))
+    return out
 
 
 def load_corrections(table=None, include_retired=False):
@@ -127,10 +135,68 @@ def _validate(args):
             raise _Fail("invalid", "date must be an ISO date (YYYY-MM-DD)")
     if kind == "together" and len(ids) < 2:
         raise _Fail("invalid", "a 'together' correction needs at least two record_ids")
+    _validate_confirmed(args, kind)
     for opt in ("reason", "question_id", "session"):
         if args.get(opt) is not None and not isinstance(args[opt], str):
             raise _Fail("invalid", f"{opt} must be a string")
     return kind, str(when) if when else "", ids
+
+
+def _validate_confirmed(args, kind):
+    """kind confirmed: first_date, last_date, method, optional supersedes. No other kind takes them."""
+    if kind != "confirmed":
+        given = [k for k in _CONFIRMED_ONLY if args.get(k) is not None]
+        if given:
+            raise _Fail("invalid", f"{', '.join(given)} belong to a 'confirmed' correction only, not '{kind}'")
+        return
+    days = {}
+    for f in ("first_date", "last_date"):
+        try:
+            days[f] = _date.fromisoformat(str(args.get(f)))
+        except ValueError:
+            raise _Fail("invalid", f"{f} is required for a 'confirmed' correction and must be an ISO date (YYYY-MM-DD)")
+    if days["first_date"] > days["last_date"]:
+        raise _Fail("invalid", "first_date must not be after last_date")
+    if args.get("method") not in contract.CONFIRMATION_METHODS:
+        raise _Fail("invalid", f"method must be one of {', '.join(contract.CONFIRMATION_METHODS)}")
+    sup = args.get("supersedes")
+    if sup is not None and (not isinstance(sup, list) or not all(isinstance(x, str) and x.startswith(RECORD_KIND + "-")
+                                                                 and len(x) > len(RECORD_KIND) + 1 for x in sup)):
+        raise _Fail("invalid", "supersedes must be a list of confirmation ids (correction-<hash16>)")
+
+
+def check_record_ids_exist(ids, table):
+    """A correction may name only records the engine can hold: a flight row or a lodging, car rental or drive
+    record, cancelled ones included (the engine holds those with a disposition). Raises invalid, naming the unknown ids."""
+    lf, unknown = _lf(), []
+    try:
+        for rid in ids:
+            kind, _, rest = rid.partition("-")
+            if kind in _HELD_KINDS and rest:
+                item = table.get_item(Key={"pk": f"{kind}#{rest}", "sk": contract.SK_CURRENT}, ConsistentRead=True).get("Item")
+            else:
+                item = lf._get_table().get_item(Key={"flight_id": rid}, ConsistentRead=True).get("Item")
+            if not item:
+                unknown.append(rid)
+    except (ClientError, BotoCoreError) as exc:
+        raise _unreachable(exc)
+    if unknown:
+        raise _Fail("invalid", f"No such record: {', '.join(unknown)}. A correction names only records that exist. Nothing was written.")
+
+
+def check_supersedes_exist(args, table):
+    """supersedes names only existing corrections of kind confirmed (retired ones are fine). Raises invalid."""
+    unknown = []
+    try:
+        for cid in sorted(set(args.get("supersedes") or [])):
+            item = table.get_item(Key={"pk": f"{RECORD_KIND}#{cid[len(RECORD_KIND) + 1:]}", "sk": contract.SK_CURRENT},
+                                  ConsistentRead=True).get("Item")
+            if not item or item.get("correction_kind") != "confirmed":
+                unknown.append(cid)
+    except (ClientError, BotoCoreError) as exc:
+        raise _unreachable(exc)
+    if unknown:
+        raise _Fail("invalid", f"supersedes names no confirmation: {', '.join(unknown)}. Nothing was written.")
 
 
 def _author():
@@ -151,6 +217,10 @@ def _build_item(args, kind, when, ids):
             "date_iso": when or created[:10], "record_ids": ids, "created_at": created, "updated_at": created, **stamp}
     if when:
         item["date"] = when
+    if kind == "confirmed":
+        item.update(first_date=args["first_date"], last_date=args["last_date"], method=args["method"])
+        if args.get("supersedes"):
+            item["supersedes"] = sorted(set(args["supersedes"]))
     for opt in ("reason", "question_id"):
         if args.get(opt):
             item[opt] = args[opt]
@@ -164,6 +234,8 @@ async def record_trip_correction(arguments):
     try:
         kind, when, ids = _validate(args)
         table = _table()  # fail early and by name if the setting is missing, for the dry run too
+        check_record_ids_exist(ids, table)  # unknown ids are refused, dry run included
+        check_supersedes_exist(args, table)
         item = _build_item(args, kind, when, ids)
         if dry_run:
             return lf._resolved_call(
