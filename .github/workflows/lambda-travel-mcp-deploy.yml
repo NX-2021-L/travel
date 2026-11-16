@@ -28,6 +28,11 @@ on:
         description: "DRILL: make one verify check fail on purpose so the automatic undo runs"
         type: boolean
         default: false
+      drill_withhold_module:
+        description: "DRILL: pretend the build expects this extra module (e.g. lane_drill.py) so the package check fails and the undo runs"
+        type: string
+        required: false
+        default: ""
       reason:
         description: "Why this run is being triggered"
         type: string
@@ -51,6 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_VERIFY_FAIL: ${{ inputs.force_verify_fail && 'true' || 'false' }}
+      DRILL_EXPECT_EXTRA_MODULE: ${{ inputs.drill_withhold_module }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,6 +122,8 @@ jobs:
           aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
             --query 'FunctionUrl' --output text >/dev/null || { echo "CHECK FAILED: function url config"; fail=1; }
           python3 scripts/emit_caps.py --check || { echo "CHECK FAILED: emit_caps --check"; fail=1; }
+          # Token-free: reads the DEPLOYED $LATEST artifact (after apply) via lambda:GetFunction.
+          python3 scripts/verify_deployed_package.py || { echo "CHECK FAILED: deployed package"; fail=1; }
           if [ "${FORCE_VERIFY_FAIL}" = "true" ]; then
             echo "CHECK FAILED: forced (FORCE_VERIFY_FAIL drill)"; fail=1
           fi
