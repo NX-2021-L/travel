@@ -24,6 +24,10 @@ Parameters:
     Description: >-
       "true" creates a public Function URL (auth NONE) and its public invoke permission.
       "false" creates neither, so the function is reachable only through IAM.
+  InternalInvokerRole:
+    Type: String
+    Default: ""
+    Description: Role ARN the internal door answers (INTERNAL_INVOKER_ROLE); required when PublicEdge is false.
   CodeS3Bucket:
     Type: String
     Description: Bucket holding the function package.
@@ -177,6 +181,8 @@ Resources:
           TABLE_NAME: !Ref FlightsTable
           RECORDS_TABLE_NAME: !Ref RecordsTable
           MCP_TRANSPORT: !Ref McpTransport
+          DOOR_MODE: !If [IsPublicEdge, public, internal]
+          INTERNAL_INVOKER_ROLE: !Ref InternalInvokerRole
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
           COGNITO_CLIENT_ID: !Ref CognitoClientId
           COGNITO_REGION: !Ref CognitoRegion

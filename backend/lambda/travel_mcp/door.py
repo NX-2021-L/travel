@@ -1,0 +1,88 @@
+"""Which door a deployment answers through, and the refusal of the other one (FLY-TSK-028-0D, A-4).
+
+A deployment is exactly one of two things, named by the DOOR_MODE setting:
+  public    reachable through a Function URL. Answers HTTP-shaped events (requestContext.http) only;
+            refuses anything else (mirror of finance's NonHttpEventRefused).
+  internal  reachable only by direct invocation. Answers a direct event from the role named by
+            INTERNAL_INVOKER_ROLE; refuses any HTTP-shaped event.
+No default: an absent or unknown DOOR_MODE refuses to start, like every other setting (lane 1A).
+Lambda does not attest the caller inside the event, so the role is a declared claim checked against the
+setting; the enforcing gate is the function's resource policy, which the template grants to nobody
+publicly when the deployment is internal. Messages name keys, never values. Stdlib only.
+
+Direct event shape: {"invoker_role": "<role arn>", "mcp": {<one JSON-RPC request>}}.
+"""
+import json
+import os
+
+import settings
+
+MODE_KEY = "DOOR_MODE"
+ROLE_KEY = "INTERNAL_INVOKER_ROLE"
+MODES = ("public", "internal")
+DOOR_KEYS = (MODE_KEY, ROLE_KEY)
+
+
+class DoorError(settings.SettingsError):
+    """DOOR_MODE (or the role it needs) is absent or invalid; the function must not start."""
+
+
+class NonHttpEventRefused(Exception):
+    """A public-edge deployment was handed an event that did not come through its Function URL."""
+
+
+class HttpEventRefused(Exception):
+    """An internal-door deployment was handed an HTTP-shaped event."""
+
+
+class InvokerRefused(Exception):
+    """A direct event did not name the configured invoker role, or carried no request."""
+
+
+def load(environ=None):
+    """(mode, invoker_role). Raises DoorError when the mode is absent/invalid or internal has no role."""
+    env = os.environ if environ is None else environ
+    mode = str(env.get(MODE_KEY) or "").strip()
+    if mode not in MODES:
+        raise DoorError(f"refusing to start: {MODE_KEY} must be one of {', '.join(MODES)}")
+    role = str(env.get(ROLE_KEY) or "").strip()
+    if mode == "internal" and not role:
+        raise DoorError(f"refusing to start: {ROLE_KEY} is required when {MODE_KEY} is internal")
+    return mode, role
+
+
+def is_http_shaped(event) -> bool:
+    rc = event.get("requestContext") if isinstance(event, dict) else None
+    return isinstance(rc, dict) and bool(rc.get("http"))
+
+
+def admit(event, mode, role):
+    """Return "http" or "direct" when the event may be served in this mode; raise a refusal otherwise."""
+    http = is_http_shaped(event)
+    if mode == "public":
+        if not http:
+            raise NonHttpEventRefused("public edge refuses an event that did not come through its Function URL")
+        return "http"
+    if http:
+        raise HttpEventRefused("internal door refuses an HTTP-shaped event")
+    if not role or event.get("invoker_role") != role or not isinstance(event.get("mcp"), dict):
+        raise InvokerRefused("internal door answers only a direct event from the named role")
+    return "direct"
+
+
+def refusal(exc) -> dict:
+    """The response for a refused event: 403 in the HTTP response shape, no detail beyond the class."""
+    return {"statusCode": 403, "headers": {"content-type": "application/json"},
+            "body": json.dumps({"error": "refused", "reason": type(exc).__name__}), "isBase64Encoded": False}
+
+
+def direct_to_http(event, role) -> dict:
+    """Wrap an admitted direct event as the request the tool handler already serves, carrying the role as principal."""
+    return {
+        "requestContext": {"http": {"method": "POST", "path": "/mcp"}},
+        "rawPath": "/mcp",
+        "headers": {"content-type": "application/json", "accept": "application/json, text/event-stream"},
+        "body": json.dumps(event["mcp"]),
+        "isBase64Encoded": False,
+        "io_kit_mcp": {"principal": {"sub": role, "groups": []}, "pool": "internal-door"},
+    }

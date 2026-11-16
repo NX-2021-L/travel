@@ -48,6 +48,9 @@ from io_kit_mcp_edge.jwks import fetch_https
 import settings as _settings  # noqa: E402
 
 _S = _settings.load()
+import door as _door  # noqa: E402  FLY-TSK-028-0D: which door this deployment answers through; absent mode refuses to start
+
+DOOR_MODE, INTERNAL_INVOKER_ROLE = _door.load()
 TABLE_NAME = _S["TABLE_NAME"]
 RECORDS_TABLE_NAME = _S["RECORDS_TABLE_NAME"]
 SURFACE_NAME = _S["SURFACE_NAME"]
@@ -1073,6 +1076,7 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     # Anything without it never reaches a tool (defence in depth).
     ctx = event.get("io_kit_mcp") or {}
     edge_principal = ctx.get("principal")
+    internal_door = DOOR_MODE == "internal" and ctx.get("pool") == "internal-door"
     if not isinstance(edge_principal, dict) or not edge_principal.get("sub"):
         return {
             "statusCode": 401,
@@ -1085,6 +1089,9 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
         "cognito:groups": edge_principal.get("groups") or [],
         "_pool": ctx.get("pool") or "iograph",
     })
+    if internal_door:  # admitted by door.admit as the named role; not a Cognito sub
+        principal = {"kind": "internal-role", "id": edge_principal["sub"], "sub": edge_principal["sub"],
+                     "groups": [], "allowed": True, "pool": "internal-door"}
     if not principal.get("allowed"):
         return {
             "statusCode": 403,
@@ -1174,6 +1181,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "body": json.dumps({"error": "Requires MCP_TRANSPORT=streamable_http"}),
             "isBase64Encoded": False,
         }
+    try:  # A-4: the other door's events are refused in both modes
+        shape = _door.admit(event, DOOR_MODE, INTERNAL_INVOKER_ROLE)
+    except (_door.NonHttpEventRefused, _door.HttpEventRefused, _door.InvokerRefused) as exc:
+        return _door.refusal(exc)
+    if shape == "direct":  # internal door: the named role, straight to the tools (no bearer; IAM is the gate)
+        return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE), context)
     door = _enceladus_door(event)
     if door is not None:  # Enceladus-pool internal door: validated by validate_bearer, then straight to the tools
         event.setdefault("io_kit_mcp", {}).update(
