@@ -27,8 +27,10 @@ LAMBDA_DIR = HERE.parent / "backend" / "lambda" / "travel_mcp"
 sys.path.insert(0, str(LAMBDA_DIR))
 import resolve_env  # noqa: E402
 
-FUNCTION = os.environ.get("FUNCTION_NAME", "io-travel-mcp-server")
-REGION = os.environ.get("AWS_REGION", "us-west-2")
+# FLY-TSK-028-0B: no deployment is named here; both come from the supplied settings. Empty when absent, and
+# plan (below) then refuses before any AWS call.
+FUNCTION = os.environ.get("FUNCTION_NAME", "")
+REGION = os.environ.get("AWS_REGION", "")
 
 
 def aws(*args, check=True):
@@ -81,6 +83,11 @@ def requirements_lines() -> list:
 
 
 def cmd_plan(_a) -> int:
+    # Fail closed (A-2): a missing deploy setting stops the run here, before apply, naming KEYS only.
+    absent = resolve_env.missing_deploy_settings()
+    if absent:
+        print("PLAN REFUSED: deploy settings absent: " + ", ".join(sorted(absent)))
+        return 3
     cfg = json.loads(aws("lambda", "get-function-configuration", "--function-name", FUNCTION))
     versions = json.loads(aws("lambda", "list-versions-by-function", "--function-name", FUNCTION))
     current = (cfg.get("Environment") or {}).get("Variables") or {}
@@ -88,7 +95,7 @@ def cmd_plan(_a) -> int:
     print(render_plan(cfg, highest_version(versions), resolve_env.diff_env(current, resolved), requirements_lines()))
     msg = resolve_env.guard(resolved)
     if msg:
-        print(f"  GUARD WOULD ABORT: {msg}")
+        print(f"PLAN REFUSED: {msg}")
         return 3
     return 0
 

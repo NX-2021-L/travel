@@ -19,8 +19,8 @@ from pathlib import Path
 
 LAMBDA_DIR = Path(__file__).resolve().parent.parent / "backend" / "lambda" / "travel_mcp"
 DEPLOY_ONLY_HELPERS = {"resolve_env.py"}  # keep equal to deploy.sh
-FUNCTION = os.environ.get("FUNCTION_NAME", "io-travel-mcp-server")
-REGION = os.environ.get("AWS_REGION", "us-west-2")
+FUNCTION = os.environ.get("FUNCTION_NAME", "")  # FLY-TSK-028-0B: supplied setting, no default
+REGION = os.environ.get("AWS_REGION", "")
 
 
 def expected_modules(directory=LAMBDA_DIR):

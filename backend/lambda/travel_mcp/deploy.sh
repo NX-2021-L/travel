@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# io-travel MCP Server Lambda deployment script
+# travel MCP Server Lambda deployment script
 # Follows the Enceladus Lambda deployment pattern
 
-FUNCTION_NAME="io-travel-mcp-server"
-ROLE_ARN="${LAMBDA_ROLE_ARN:-arn:aws:iam::356364570033:role/io-travel-mcp-lambda-role}"
-REGION="${AWS_REGION:-us-west-2}"
+# FLY-TSK-028-0B (A-2): no deployment is named here. Everything that identifies one is supplied in the
+# environment (deploy/settings.env, loaded by the workflow); an absent one aborts before anything is built.
+FUNCTION_NAME="${FUNCTION_NAME:?ABORT: FUNCTION_NAME is not supplied}"
+REGION="${AWS_REGION:?ABORT: AWS_REGION is not supplied}"
+ROLE_ARN="${LAMBDA_ROLE_ARN:-}"   # needed only when the function is created; checked there
+CA_DOMAIN="${CODEARTIFACT_DOMAIN:?ABORT: CODEARTIFACT_DOMAIN is not supplied}"
+CA_OWNER="${CODEARTIFACT_OWNER:?ABORT: CODEARTIFACT_OWNER is not supplied}"
+CA_REGION="${CODEARTIFACT_REGION:?ABORT: CODEARTIFACT_REGION is not supplied}"
+CA_REPO="${CODEARTIFACT_REPOSITORY:?ABORT: CODEARTIFACT_REPOSITORY is not supplied}"
 RUNTIME="python3.12"
 ARCHITECTURE="x86_64"
 MEMORY=512
@@ -28,13 +34,13 @@ mkdir -p "${BUILD_DIR}"
 
 # Install dependencies — native x86_64 pip install matches the
 # GitHub Actions runner and Lambda x86_64 architecture.
-# io-kit-mcp-edge is served from the private CodeArtifact repo io/io-kit (FLY-TSK-022).
+# io-kit-mcp-edge is served from the private CodeArtifact repository named by CODEARTIFACT_* (FLY-TSK-022).
 # The token is never echoed; the deploy role has CodeArtifact read.
-CODEARTIFACT_TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
+CODEARTIFACT_TOKEN=$(aws codeartifact get-authorization-token --domain "${CA_DOMAIN}" --domain-owner "${CA_OWNER}" --region "${CA_REGION}" --query authorizationToken --output text)
 pip install \
   --target "${BUILD_DIR}" \
   -r "${SCRIPT_DIR}/requirements.txt" \
-  --extra-index-url "https://aws:${CODEARTIFACT_TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" \
+  --extra-index-url "https://aws:${CODEARTIFACT_TOKEN}@${CA_DOMAIN}-${CA_OWNER}.d.codeartifact.${CA_REGION}.amazonaws.com/pypi/${CA_REPO}/simple/" \
   --quiet
 unset CODEARTIFACT_TOKEN
 
@@ -66,7 +72,8 @@ log "Using role: ${ROLE_ARN}"
 # --- Resolve environment + guard (before any code is shipped) ---
 # Merge the current function env with values supplied by this shell so variables
 # that are not supplied (e.g. COGNITO_ALLOWED_SUBS) are PRESERVED; refuse to
-# deploy when a Cognito pool is configured with an empty allow-list (E2-R12).
+# deploy when a Cognito pool is configured with an empty allow-list (E2-R12), and when ANY
+# required setting (contract.SETTINGS) is absent from the resolved environment (FLY-TSK-028-0B).
 CURRENT_ENV=$(aws lambda get-function-configuration --function-name "${FUNCTION_NAME}" \
     --region "${REGION}" --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
 export CURRENT_ENV
@@ -94,7 +101,7 @@ else
     aws lambda create-function \
         --function-name "${FUNCTION_NAME}" \
         --runtime "${RUNTIME}" \
-        --role "${ROLE_ARN}" \
+        --role "${ROLE_ARN:?ABORT: LAMBDA_ROLE_ARN is not supplied (needed to create the function)}" \
         --handler "${HANDLER}" \
         --zip-file "fileb://${ZIP_FILE}" \
         --memory-size "${MEMORY}" \
