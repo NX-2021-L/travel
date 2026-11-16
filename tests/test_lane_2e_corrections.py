@@ -1,14 +1,12 @@
 """FLY-TSK-029-0E / A-11: corrections are written in two steps with their author, survive a rebuild,
 reopen their trip when retired, and are never deleted.
 
-Offline (moto). The trip engine (lane 2D, trip_engine.py) was NOT on main when this was written, so
-clauses 3 and 4 are asserted against `standin_engine` below, a deliberately tiny stand-in for the grouping
-step. test_real_engine_consumes_corrections is skipped until trip_engine.py lands; it is the test that
-covers the real integration.
+Offline (moto). Clauses 3 and 4 are proved against the REAL engine (trip_engine.compute_trips) in the
+test_real_engine_* tests at the bottom (FLY-TSK-042). The `standin_engine` tests above predate lane 2D and
+are kept as a cheap engine-independent check of the storage surface.
 """
 import ast
 import asyncio
-import importlib.util
 import json
 import os
 import sys
@@ -272,9 +270,86 @@ def test_no_delete_at_runtime(table, monkeypatch):
     assert len(rows(table)) == 1
 
 
-# ------------------------------------------------------------------ real engine (lane 2D), when present
-@pytest.mark.skipif(importlib.util.find_spec("trip_engine") is None,
-                    reason="lane 2D trip_engine.py is not on main yet; clauses 3-4 above run on a stand-in")
-def test_real_engine_consumes_corrections():
-    pytest.fail("trip_engine.py has landed: replace this with a test that feeds lane.engine_corrections() "
-                "to the real engine, retires, and asserts the pre-correction trips. Lane 2D's signature decides the call.")
+# ------------------------------------------------------------------ the real engine (lane 2D, FLY-TSK-042)
+import trip_engine as te  # noqa: E402
+
+_SEA, _JFK, _BOS = ("apt:SEA", "city:seattle"), ("apt:JFK", "city:new-york"), ("apt:BOS", "city:boston")
+_HOME = {"residence_uid": "R1", "first_night": "2020-01-01", "last_night": None, "city": "Seattle",
+         "places": [{"place_id": "apt:SEA", "area_id": "city:seattle"}]}
+
+
+def _fl(fid, date, o, d):
+    return {"flight_id": fid, "date_iso": date, "origin": o[0][4:], "dest": d[0][4:], "origin_place_id": o[0],
+            "origin_area_id": o[1], "dest_place_id": d[0], "dest_area_id": d[1], "status": "active"}
+
+
+def _trips(records, table):
+    """The read path: stored corrections in, real engine out. Nothing carried over between calls."""
+    return te.compute_trips(records, [_HOME], today="2024-12-01", corrections=lane.engine_corrections(table))
+
+
+def _shape(res):
+    return {k: res[k] for k in ("trips", "excluded", "unapplied_corrections", "duplicate_inputs")}
+
+
+OPEN = [_fl("f1", "2024-03-01", _SEA, _JFK)]                                    # out, no way back recorded
+TWO = [_fl("a1", "2024-03-01", _SEA, _JFK), _fl("a2", "2024-03-02", _JFK, _SEA),  # two separate closed trips
+       _fl("b1", "2024-03-03", _SEA, _BOS), _fl("b2", "2024-03-05", _BOS, _SEA)]
+
+
+def test_real_engine_returned_changes_trip_survives_rebuild_and_reopens_on_retire(table):
+    pre = _shape(_trips(OPEN, table))
+    assert pre["trips"][0]["last_basis"] == "undecided" and "return not recorded" in pre["trips"][0]["flags"]
+
+    cid = record({"kind": "returned", "date": "2024-03-06", "record_ids": ["f1"], "session": "s1"})["correction_id"]
+    t = _trips(OPEN, table)["trips"][0]
+    assert (t["last_date"], t["last_basis"]) == ("2024-03-06", "recorded") and "return not recorded" not in t["flags"]
+    assert t["corrections"] == [{"kind": "returned", "date": "2024-03-06", "record_ids": ["f1"],
+                                 "author": "io@example.test", "question_id": None}]
+
+    closed = _shape(_trips(OPEN, table))
+    rebuilt = _shape(te.compute_trips(list(reversed(OPEN)), [_HOME], today="2024-12-01", corrections=lane.engine_corrections(
+        boto3.resource("dynamodb", region_name="us-west-2").Table(RECORDS))))
+    assert closed == rebuilt != pre                                              # same inputs, identical trips
+
+    call("retire_trip_correction", {"correction_id": cid})
+    assert _shape(_trips(OPEN, table)) == pre                                    # reopened: the pre-correction trips
+    assert len(rows(table)) == 1                                                 # and the correction is still stored
+
+
+def test_real_engine_leave_out_and_retire(table):
+    pre = _shape(_trips(TWO, table))
+    assert len(pre["trips"]) == 2
+    cid = record({"kind": "leave_out", "record_ids": ["b1"]})["correction_id"]
+    res = _trips(TWO, table)
+    assert [x["record_id"] for x in res["excluded"] if x["disposition"] == "left_out"] == ["b1"]
+    call("retire_trip_correction", {"correction_id": cid})
+    assert _shape(_trips(TWO, table)) == pre
+
+
+def test_real_engine_together_and_retire(table):
+    pre = _shape(_trips(TWO, table))
+    cid = record({"kind": "together", "record_ids": ["a1", "b1"]})["correction_id"]
+    joined = _trips(TWO, table)
+    assert len(joined["trips"]) == 1 and joined["trips"][0]["corrections"][0]["kind"] == "together"
+    assert _shape(joined) == _shape(_trips(TWO, table))
+    call("retire_trip_correction", {"correction_id": cid})
+    assert _shape(_trips(TWO, table)) == pre
+
+
+def test_real_engine_left_and_retire(table):
+    only_back = [_fl("g1", "2024-03-05", _JFK, _SEA)]
+    pre = _shape(_trips(only_back, table))
+    cid = record({"kind": "left", "date": "2024-03-01", "record_ids": ["g1"]})["correction_id"]
+    t = _trips(only_back, table)["trips"][0]
+    assert (t["first_date"], t["first_basis"]) == ("2024-03-01", "recorded") and "start not recorded" not in t["flags"]
+    call("retire_trip_correction", {"correction_id": cid})
+    assert _shape(_trips(only_back, table)) == pre
+
+
+def test_real_engine_reports_a_correction_naming_an_absent_record(table):
+    """record_ids are not validated at write time (finding for lane 3B); the engine surfaces them as unapplied."""
+    record({"kind": "returned", "date": "2024-03-06", "record_ids": ["no-such-flight"]})
+    res = _trips(OPEN, table)
+    assert [u["record_ids"] for u in res["unapplied_corrections"]] == [["no-such-flight"]]
+    assert res["trips"][0]["last_basis"] == "undecided"                          # the trip is untouched
