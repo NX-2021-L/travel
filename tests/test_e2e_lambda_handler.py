@@ -142,7 +142,7 @@ def test_resolve_env_preserves_allow_list():
     assert env["COGNITO_ALLOWED_SUBS"] == "a,b" and env["EXTRA"] == "keep" and env["TRAVEL_WRITE_GROUPS"] == "g"
     assert "COGNITO_CLIENT_SECRET" not in env and "COGNITO_CLIENT_SECRET" not in resolve_env.resolve({"COGNITO_CLIENT_SECRET": "old"}, {})
     # FLY-TSK-028-0B: complete once every required setting is supplied; absent ones are refused (tests/test_settings_fail_closed.py)
-    complete = {k: env.get(k) or "x" for k in resolve_env.KEYS}
+    complete = {**{k: env.get(k) or "x" for k in resolve_env.KEYS}, "DOOR_MODE": "public"}  # FLY-TSK-028-0D
     assert resolve_env.guard(complete) == ""
     assert resolve_env.resolve(cur, {"COGNITO_ALLOWED_SUBS": "z"})["COGNITO_ALLOWED_SUBS"] == "z"
 
