@@ -120,6 +120,10 @@ Resources:
       DeletionProtectionEnabled: true
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+      # FLY-TSK-045 (A-38): new images on every deployment. Nothing in travel reads this stream; a projector owned
+      # by another repository will. Adding it updates the table in place (no replacement).
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
       AttributeDefinitions:
         - {AttributeName: pk, AttributeType: S}
         - {AttributeName: sk, AttributeType: S}

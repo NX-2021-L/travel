@@ -15,7 +15,7 @@ ENTRY POINT
                    last_night (None = open), optional city/state/country/tenure/evidence. An
                    optional `places` list ({place_id, area_id, lat, lon, radius_km}) is accepted.
     home_places    home_places records ({residence_uid, valid_from, valid_to, places, status}).
-    corrections    correction records (kind returned|left|together|leave_out, date, record_ids,
+    corrections    correction records (kind returned|left|together|leave_out|confirmed, date, record_ids,
                    status, author, question_id).
     today          ISO date or date; required, because the engine never reads a clock.
     Raises NoHomeRecorded when home_periods is empty (the read's NO_HOME_RECORDED refusal).
@@ -380,10 +380,49 @@ def compute_trips(records, home_periods, *, today, home_places=(), corrections=(
             trips.append(trip)
     trips.sort(key=lambda t: (t["first_date"], t["key"]))
     _signals(trips)
+    superseded = _superseded(corr)
+    _arc(trips, [c for c in corr if c.get("kind") == "confirmed" and id(c) not in superseded], applied)
     excluded.sort(key=lambda x: (x["record_id"], x["disposition"]))
-    unapplied = [c for c in corr if c.get("kind") != "leave_out" and id(c) not in applied]
+    unapplied = _unapplied(corr, applied, seen)
     return {"trips": trips, "excluded": excluded, "unapplied_corrections": unapplied,
             "duplicate_inputs": sorted(set(repeated))}
+
+
+def _superseded(corr):
+    """Ids (of the active confirmations) that another active confirmation names in its `supersedes`."""
+    named = {i for c in corr if c.get("kind") == "confirmed" for i in (c.get("supersedes") or [])}
+    return {id(c) for c in corr if c.get("kind") == "confirmed" and c.get("correction_id") in named}
+
+
+def _arc(trips, confirmations, applied):
+    """arc: confirmed (an active confirmation's record set and both dates equal the trip's, and its id), else proposed
+    (no flag, no signal, no undecided boundary), else detected. Reads the confirmations; changes no record or date."""
+    for t in trips:
+        ids = set(t["record_ids"])
+        hit = [c for c in confirmations if set(c.get("record_ids") or []) == ids
+               and c.get("first_date") == t["first_date"] and c.get("last_date") == t["last_date"]]
+        for c in hit:
+            applied.add(id(c))
+        if hit:
+            win = max(hit, key=lambda c: (str(c.get("created_at")), str(c.get("correction_id"))))  # newest; the id breaks a tie
+            t["arc"], t["confirmation_id"] = "confirmed", win.get("correction_id")
+        else:
+            quiet = not t["flags"] and not t["signals"] and "undecided" not in (t["first_basis"], t["last_basis"])
+            t["arc"], t["confirmation_id"] = ("proposed" if quiet else "detected"), None
+
+
+def _unapplied(corr, applied, held):
+    """Every active correction that no longer fits: it matched nothing, or it names a record id the engine does not hold
+    (any kind, leave_out included). A confirmation that another active confirmation supersedes is not reported."""
+    gone = _superseded(corr)
+    out = []
+    for c in corr:
+        unknown = sorted(i for i in (c.get("record_ids") or []) if i not in held)
+        if unknown:
+            out.append({**c, "unknown_record_ids": unknown})
+        elif c.get("kind") != "leave_out" and id(c) not in applied and id(c) not in gone:
+            out.append(c)
+    return out
 
 
 def _merge_together(stretches, corr):

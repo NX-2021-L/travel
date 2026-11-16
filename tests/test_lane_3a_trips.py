@@ -281,3 +281,28 @@ def test_registered_through_the_dispatcher_not_a_stub(world):
     assert set(lane.HANDLERS) == {"list_trips", "get_trip"} and contract.LANE_MODULES["3A"] == "lane_3a_trips"
     out = call("list_trips", {})
     assert out["success"] is True and out["result"]["trips"] == []
+
+
+# ------------------------------------------------------------------ FLY-TSK-045 (A-37): arc on every trip read
+def test_list_trips_and_get_trip_carry_arc_and_a_confirmation_follows_the_records(world):
+    round_trip(world, "a", "2026-03-01", "2026-03-04")
+    flight(world, "open", "2026-05-01", "SEA", "LAX")                    # no way back: a flag, so detected
+    before = trips(call("list_trips", {}))
+    by = {t["key"]: t for t in before}
+    assert (by["a-out"]["arc"], by["a-out"]["confirmation_id"]) == ("proposed", None) and by["open"]["arc"] == "detected"
+    assert by["a-out"]["state"] == "past"
+    conf = call("record_trip_correction", {"kind": "confirmed", "record_ids": ["a-out", "a-back"], "first_date": "2026-03-01",
+                                           "last_date": "2026-03-04", "method": "examined"})
+    assert conf["success"], conf
+    cid = conf["result"]["correction_id"]
+    after = call("list_trips", {})
+    assert [{k: v for k, v in t.items() if k not in ("arc", "confirmation_id")} for t in trips(after)] == \
+        [{k: v for k, v in t.items() if k not in ("arc", "confirmation_id")} for t in before]
+    assert after["result"]["unapplied_corrections"] == []
+    one = call("get_trip", {"trip_key": "a-out"})["result"]
+    assert (one["arc"], one["confirmation_id"], one["state"]) == ("confirmed", cid, "past")
+    assert call("get_trip", {"trip_key": "a-out"})["result"] == one          # two reads agree
+    leave = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a-back"]})
+    assert leave["success"]
+    now = call("list_trips", {})["result"]
+    assert [u["correction_id"] for u in now["unapplied_corrections"]] == [cid]

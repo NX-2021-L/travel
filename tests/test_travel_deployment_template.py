@@ -231,3 +231,14 @@ def test_the_public_grant_detector_catches_an_unguarded_grant():
     star = json.loads(json.dumps(R))
     star["Sneaky"] = {"Type": "AWS::Lambda::Permission", "Properties": {"Action": "lambda:InvokeFunction", "Principal": "*"}}
     assert _public_grants(star, "false") == ["Sneaky"]
+
+
+def test_records_table_streams_new_images_and_nothing_else_changes():
+    """FLY-TSK-045 (A-38): one stream of new images on the records table, on every deployment; the flights table has none."""
+    assert R["RecordsTable"]["Properties"]["StreamSpecification"] == {"StreamViewType": "NEW_IMAGE"}
+    assert "StreamSpecification" not in R["FlightsTable"]["Properties"]
+    p = R["RecordsTable"]
+    assert p["DeletionPolicy"] == "Retain" and p["UpdateReplacePolicy"] == "Retain"
+    assert p["Properties"]["DeletionProtectionEnabled"] is True
+    assert p["Properties"]["PointInTimeRecoverySpecification"] == {"PointInTimeRecoveryEnabled": True}
+    assert "dynamodb:GetRecords" not in json.dumps(R["ExecutionRole"]) and "DescribeStream" not in json.dumps(R["ExecutionRole"])  # nothing here reads it

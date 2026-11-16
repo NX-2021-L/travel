@@ -356,6 +356,10 @@ async def answer_trip_question(arguments):
         if ans is None:
             raise _Fail("invalid", f"answer_id {aid} is not offered; one of: {', '.join(a['answer_id'] for a in q['answers'])}")
         corr = ans["correction"]
+        try:
+            await asyncio.to_thread(corrections_lane.check_record_ids_exist, corr["record_ids"], _records_table())
+        except corrections_lane._Fail as f:
+            raise _Fail(f.code, f.message)
         await asyncio.to_thread(_validate_record_ids, corr["record_ids"])
         call = {**corr, "reason": f"{qid}: {ans['label']}", "question_id": qid}
         if session:

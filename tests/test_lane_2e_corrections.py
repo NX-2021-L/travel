@@ -38,13 +38,31 @@ def table(monkeypatch):
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST")
+        boto3.resource("dynamodb", region_name="us-west-2").create_table(
+            TableName=os.environ["TABLE_NAME"], BillingMode="PAY_PER_REQUEST",
+            KeySchema=[{"AttributeName": "flight_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "flight_id", "AttributeType": "S"}])
         principal = {"kind": "cognito", "id": "io@example.test", "sub": "s", "groups": [], "allowed": True}
         tok = lf._PRINCIPAL.set(principal)
         yield t
         lf._PRINCIPAL.reset(tok)
 
 
+def seed(*ids):
+    """A correction names only records that exist (FLY-TSK-045): put a minimal row for each id."""
+    d = boto3.resource("dynamodb", region_name="us-west-2")
+    for rid in ids:
+        kind, _, rest = rid.partition("-")
+        if kind in ("lodging", "car_rental", "drive") and rest:
+            d.Table(RECORDS).put_item(Item={"pk": f"{kind}#{rest}", "sk": "rec", "kind": kind, "record_id": rid})
+        else:
+            d.Table(os.environ["TABLE_NAME"]).put_item(Item={"flight_id": rid})
+
+
 def call(tool, args):
+    if tool == "record_trip_correction" and not args.get("_unseeded"):
+        seed(*[r for r in args.get("record_ids") or [] if isinstance(r, str)])
+    args = {k: v for k, v in args.items() if k != "_unseeded"}
     return json.loads(asyncio.run(lf.call_tool(tool, args))[0].text)
 
 
@@ -123,6 +141,7 @@ def test_no_principal_no_correction(table):
     tok = lf._PRINCIPAL.set(None)
     try:
         gated = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a"]})
+        seed("a")
         direct = json.loads(asyncio.run(lane.record_trip_correction({"kind": "leave_out", "record_ids": ["a"]}))[0].text)
     finally:
         lf._PRINCIPAL.reset(tok)
@@ -135,7 +154,7 @@ def test_unset_setting_fails_by_name(monkeypatch):
     monkeypatch.delenv("RECORDS_TABLE_NAME", raising=False)
     tok = lf._PRINCIPAL.set({"kind": "cognito", "id": "io", "sub": "s", "groups": [], "allowed": True})
     try:
-        out = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a"]})
+        out = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a"], "_unseeded": True})
     finally:
         lf._PRINCIPAL.reset(tok)
     assert out["error_envelope"]["code"] == "missing" and "RECORDS_TABLE_NAME" in out["error"]
@@ -146,7 +165,7 @@ def test_unreachable_table_fails_by_name(monkeypatch):
     with mock_aws():
         tok = lf._PRINCIPAL.set({"kind": "cognito", "id": "io", "sub": "s", "groups": [], "allowed": True})
         try:
-            out = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a"]})
+            out = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a"], "_unseeded": True})
         finally:
             lf._PRINCIPAL.reset(tok)
     assert out["error_envelope"]["code"] == "missing" and "RECORDS_TABLE_NAME" in out["error"]
@@ -348,8 +367,172 @@ def test_real_engine_left_and_retire(table):
 
 
 def test_real_engine_reports_a_correction_naming_an_absent_record(table):
-    """record_ids are not validated at write time (finding for lane 3B); the engine surfaces them as unapplied."""
+    """(Seeded: the write refuses an absent id, see test_unknown_ids_are_refused.) A correction whose record is not among the engine's inputs is unapplied."""
     record({"kind": "returned", "date": "2024-03-06", "record_ids": ["no-such-flight"]})
     res = _trips(OPEN, table)
     assert [u["record_ids"] for u in res["unapplied_corrections"]] == [["no-such-flight"]]
     assert res["trips"][0]["last_basis"] == "undecided"                          # the trip is untouched
+
+
+# ================================================================== FLY-TSK-045 (lane 3E): A-35, A-36, A-37
+def _conf(ids, first, last, **kw):
+    return {"kind": "confirmed", "record_ids": ids, "first_date": first, "last_date": last, "method": "examined", **kw}
+
+
+def _ec(cid, kind, ids, status="active", created="2024-06-01T00:00:00.000000Z", **kw):
+    return {"correction_id": cid, "kind": kind, "record_ids": ids, "status": status, "created_at": created, **kw}
+
+
+OPEN3 = [_fl("o1", "2024-06-01", _SEA, _JFK)]  # out in June, no way back recorded
+
+
+def _strip(res):
+    """The trips without the two fields a confirmation may change."""
+    return [{k: v for k, v in t.items() if k not in ("arc", "confirmation_id")} for t in res["trips"]]
+
+
+@pytest.mark.parametrize("args", [
+    {"kind": "returned", "date": "2024-03-06", "record_ids": ["ghost"]},
+    {"kind": "left", "date": "2024-03-01", "record_ids": ["ghost"]},
+    {"kind": "together", "record_ids": ["f1", "ghost"]},
+    {"kind": "leave_out", "record_ids": ["ghost", "drive-ghost"]},
+    _conf(["ghost"], "2024-03-01", "2024-03-02"),
+])
+def test_unknown_record_ids_are_refused_naming_them_dry_run_included(table, args):
+    seed("f1")
+    for dry in (True, False):
+        out = call("record_trip_correction", {**args, "dry_run": dry, "_unseeded": True})
+        assert out["success"] is False and out["error_envelope"]["code"] == "invalid" and "ghost" in out["error"]
+    assert rows(table) == []
+
+
+def test_a_cancelled_record_is_held_and_accepted(table):
+    table.put_item(Item={"pk": "lodging#x", "sk": "rec", "kind": "lodging", "status": "cancelled"})
+    assert record({"kind": "leave_out", "record_ids": ["lodging-x"], "_unseeded": True})["status"] == "active"
+
+
+def test_answer_trip_question_checks_the_ids_before_writing():
+    import inspect
+    import lane_3b_repair
+    src = inspect.getsource(lane_3b_repair.answer_trip_question)
+    assert src.index("check_record_ids_exist") < src.index('record = corrections_lane.HANDLERS["record_trip_correction"]')
+
+
+def test_engine_reports_unknown_ids_for_every_kind_leave_out_included():
+    cs = [_ec("c-out", "leave_out", ["ghost"]), _ec("c-ok", "leave_out", ["a1"]),
+          _ec("c-ret", "returned", ["a2", "ghost2"], date="2024-03-02")]
+    res = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=cs)
+    got = {u["correction_id"]: u["unknown_record_ids"] for u in res["unapplied_corrections"]}
+    assert got == {"c-out": ["ghost"], "c-ret": ["ghost2"]}
+    assert te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[cs[1]])["unapplied_corrections"] == []
+
+
+def test_the_confirmed_row_is_written_in_two_steps_with_its_author_retired_and_never_deleted(table):
+    args = _conf(["a1", "a2"], "2024-03-01", "2024-03-02", method="accepted_list")
+    seed("a1", "a2")
+    dry = call("record_trip_correction", {**args, "dry_run": True})
+    assert dry["result"]["resolved_call"]["underlying"][0]["body"]["author"] == "io@example.test" and rows(table) == []
+    res = record(args, session="s1")
+    assert (res["kind"], res["first_date"], res["last_date"], res["method"], res["supersedes"], res["author"]) == \
+        ("confirmed", "2024-03-01", "2024-03-02", "accepted_list", [], "io@example.test")
+    (item,) = rows(table)
+    assert item["correction_kind"] == "confirmed" and item["method"] == "accepted_list" and "supersedes" not in item
+    ret = json.loads(asyncio.run(lf.call_tool("retire_trip_correction", {"correction_id": res["correction_id"]}))[0].text)
+    assert ret["result"]["status"] == "retired" and len(rows(table)) == 1
+
+
+@pytest.mark.parametrize("bad", [
+    {"first_date": None}, {"last_date": "nope"}, {"first_date": "2024-03-03"}, {"method": "guess"}, {"method": None},
+    {"supersedes": "correction-abc"}, {"supersedes": ["lodging-x"]},
+])
+def test_confirmed_validation(table, bad):
+    out = call("record_trip_correction", {**_conf(["a1"], "2024-03-01", "2024-03-02"), **bad})
+    assert out["error_envelope"]["code"] == "invalid" and rows(table) == []
+
+
+def test_the_confirmed_fields_belong_to_that_kind_only(table):
+    out = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["a1"], "method": "examined"})
+    assert out["error_envelope"]["code"] == "invalid" and rows(table) == []
+
+
+def test_supersedes_names_only_existing_confirmations_retired_ones_allowed(table):
+    first = record(_conf(["a1", "a2"], "2024-03-01", "2024-03-02"))
+    other = record({"kind": "leave_out", "record_ids": ["a1"]})
+    for bad in (["correction-0000000000000000"], [other["correction_id"]]):
+        for dry in (True, False):
+            out = call("record_trip_correction", {**_conf(["a1", "a2"], "2024-03-01", "2024-03-02"), "supersedes": bad, "dry_run": dry})
+            assert out["error_envelope"]["code"] == "invalid" and bad[0] in out["error"]
+    json.loads(asyncio.run(lf.call_tool("retire_trip_correction", {"correction_id": first["correction_id"]}))[0].text)
+    n = len(rows(table))
+    ok = record({**_conf(["a1", "a2"], "2024-03-01", "2024-03-02"), "supersedes": [first["correction_id"]]})
+    assert ok["supersedes"] == [first["correction_id"]] and len(rows(table)) == n + 1
+
+
+def test_a_confirmation_changes_no_trip_and_two_reads_agree():
+    plain = te.compute_trips(TWO + OPEN3, [_HOME], today="2024-12-01")
+    c = _ec("c1", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    off = _ec("c2", "confirmed", ["b1", "b2"], first_date="2024-03-03", last_date="2024-03-06", method="examined")  # matches nothing
+    with_c = te.compute_trips(TWO + OPEN3, [_HOME], today="2024-12-01", corrections=[c, off])
+    again = te.compute_trips(TWO + OPEN3, [_HOME], today="2024-12-01", corrections=[off, c])
+    assert _strip(plain) == _strip(with_c) and with_c == again
+    assert plain["excluded"] == with_c["excluded"] and [t["key"] for t in plain["trips"]] == [t["key"] for t in with_c["trips"]]
+    assert all(t["corrections"] == [] for t in with_c["trips"])
+
+
+def test_arc_confirmed_proposed_detected_and_state_untouched():
+    c = _ec("correction-c1", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    res = te.compute_trips(TWO + OPEN3, [_HOME], today="2024-12-01", corrections=[c])
+    by = {t["key"]: t for t in res["trips"]}
+    assert (by["a1"]["arc"], by["a1"]["confirmation_id"]) == ("confirmed", "correction-c1")
+    assert (by["b1"]["arc"], by["b1"]["confirmation_id"]) == ("proposed", None)
+    assert (by["o1"]["arc"], by["o1"]["flags"]) == ("detected", ["return not recorded"])
+    assert {t["state"] for t in res["trips"]} == {"past"} and res["unapplied_corrections"] == []
+
+
+def test_arc_is_detected_with_a_signal_and_proposed_never_with_a_flag():
+    dup = [_fl("d1", "2024-03-01", _SEA, _JFK), _fl("d2", "2024-03-01", _SEA, _JFK), _fl("d3", "2024-03-02", _JFK, _SEA)]
+    res = te.compute_trips(dup, [_HOME], today="2024-12-01")
+    assert all(t["signals"] and t["arc"] == "detected" for t in res["trips"] if t["signals"])
+    assert all(t["arc"] == ("proposed" if not (t["flags"] or t["signals"]) else "detected") for t in res["trips"])
+
+
+def test_a_confirmation_that_matches_no_trip_is_unapplied_and_not_dropped():
+    wrong_dates = _ec("c-d", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-09", method="examined")
+    wrong_set = _ec("c-s", "confirmed", ["a1"], first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    res = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[wrong_dates, wrong_set])
+    assert sorted(u["correction_id"] for u in res["unapplied_corrections"]) == ["c-d", "c-s"]
+    assert all(t["arc"] == "proposed" for t in res["trips"])
+
+
+def test_adding_or_leaving_out_a_record_turns_the_confirmation_unapplied():
+    c = _ec("c1", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    assert te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[c])["unapplied_corrections"] == []
+    lodging = TWO + [{"record_id": "lodging-z", "kind": "lodging", "first_night": "2024-03-01", "last_night": "2024-03-01",
+                      "place_id": "city:new-york", "area_id": "city:new-york", "status": "active"}]
+    res = te.compute_trips(lodging, [_HOME], today="2024-12-01", corrections=[c])
+    assert [u["correction_id"] for u in res["unapplied_corrections"]] == ["c1"]
+    out = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[c, _ec("c-lo", "leave_out", ["a2"])])
+    assert "c1" in [u["correction_id"] for u in out["unapplied_corrections"]]
+
+
+def test_a_superseded_confirmation_is_ignored_and_not_reported():
+    old = _ec("correction-old", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    new = _ec("correction-new", "confirmed", ["a1", "a2"], first_date="2024-03-01", last_date="2024-03-02", method="examined",
+              supersedes=["correction-old"], created="2024-06-02T00:00:00.000000Z")
+    res = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[old, new])
+    assert res["trips"][0]["confirmation_id"] == "correction-new" and res["unapplied_corrections"] == []
+    stale = _ec("correction-s", "confirmed", ["b1"], first_date="2024-03-03", last_date="2024-03-05", method="examined")
+    newer = _ec("correction-n", "confirmed", ["b1", "b2"], first_date="2024-03-03", last_date="2024-03-05", method="examined",
+                supersedes=["correction-s"])
+    res = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=[stale, newer])
+    assert res["unapplied_corrections"] == []          # the superseded one does not match, and is not reported either
+
+
+def test_several_confirmations_on_one_trip_newest_wins_and_the_id_breaks_a_tie():
+    kw = dict(first_date="2024-03-01", last_date="2024-03-02", method="examined")
+    a = _ec("correction-a", "confirmed", ["a1", "a2"], created="2024-06-01T00:00:00.000000Z", **kw)
+    b = _ec("correction-b", "confirmed", ["a1", "a2"], created="2024-06-01T00:00:00.000000Z", **kw)
+    c = _ec("correction-c", "confirmed", ["a1", "a2"], created="2024-05-01T00:00:00.000000Z", **kw)
+    for order in ([a, b, c], [c, b, a], [b, a, c]):
+        res = te.compute_trips(TWO, [_HOME], today="2024-12-01", corrections=order)
+        assert res["trips"][0]["confirmation_id"] == "correction-b" and res["unapplied_corrections"] == []

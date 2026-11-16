@@ -104,14 +104,16 @@ RECORD_KINDS = {
     "correction": {  # BRD 6.6
         "natural_key": ["kind", "date", "record_ids(sorted, comma-joined)", "created_at"],
         "fields": ["kind", "date", "record_ids", "reason", "author", "session", "question_id", "status",
-                   "created_at", "retired_at", "retired_by"],
+                   "created_at", "retired_at", "retired_by", "first_date", "last_date", "method", "supersedes"],
         "required": ["kind", "record_ids"],
         "mutable": ["status", "retired_at", "retired_by"],  # retire only; a correction is never deleted
         "date_iso": "date", "index_area_id": None, "place_ends": {},
     },
 }
 DRIVE_MEANS = ("road",)  # rail, sea, other are later values
-CORRECTION_KINDS = ("returned", "left", "together", "leave_out")
+CORRECTION_KINDS = ("returned", "left", "together", "leave_out", "confirmed")
+CONFIRMATION_METHODS = ("examined", "accepted_list")  # how io came to confirm a trip (kind confirmed)
+ARCS = ("detected", "proposed", "confirmed")  # a trip's arc, read from the records and the confirmations
 CORRECTION_STATUSES = ("active", "retired")
 
 
@@ -159,7 +161,7 @@ TRIP_STATE_MEANING = {
 }
 TRIP_LIST_ORDER = ("under way", "upcoming", "planned", "past")  # past newest first
 TRIP_FIELDS = ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited", "legs",
-               "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections"]
+               "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
 GET_TRIP_EXTRA_FIELDS = ["first_rule", "last_rule"]  # the rule behind each derived boundary
 
 # Questions: one per flag and per signal. Ids are registered here; WORDING is io's vocabulary
@@ -275,7 +277,10 @@ _NEW.update({
                                   ["trip_key", "question_id", "answer_id"])),
     "record_trip_correction": ("write", "2E", "Record a correction in free form, for a case the prepared answers miss.",
                                _obj({"kind": _S(enum=list(CORRECTION_KINDS)), "date": _S("ISO date; required for returned and left"),
-                                     "record_ids": _p("array", items=_S()), "reason": _S(), "question_id": _S(), **_SESSION},
+                                     "record_ids": _p("array", items=_S()), "reason": _S(), "question_id": _S(),
+                                     "first_date": _S("ISO date; kind confirmed only"), "last_date": _S("ISO date; kind confirmed only"),
+                                     "method": _S("kind confirmed only", enum=list(CONFIRMATION_METHODS)),
+                                     "supersedes": _p("array", "kind confirmed only: confirmation ids this one replaces", items=_S()), **_SESSION},
                                     ["kind", "record_ids"])),
     "retire_trip_correction": ("write", "2E", "Retire a correction, reopening what it closed. Never deletes.",
                                _obj({"correction_id": _S(), "reason": _S(), **_SESSION}, ["correction_id"])),
