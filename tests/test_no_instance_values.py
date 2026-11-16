@@ -46,6 +46,20 @@ SCANNED = (
 # (file name, literal) pairs allowed; see the module docstring.
 ALLOWED = {("caps.json", "io-travel"), ("permission_manifest.json", "io-travel")}
 
+# KNOWN DEBT, owned by the lanes that landed these modules before this guard existed (FLY-TSK-028-0B may
+# not edit lane_*.py or home_service.py). Each is a fallback to an io value that a deployment cannot
+# override: home_service names the surface in a header (it must read SURFACE_NAME); the lane modules
+# default a region (unreachable on Lambda, where AWS_REGION is always set, and settings.load() refuses
+# to start without it, but still a literal). The list may only SHRINK: an entry whose literal is gone
+# fails test_known_debt_is_not_stale, and a new offender fails test_every_python_module_the_function_ships.
+KNOWN_DEBT = {
+    ("home_service.py", "io-travel"): "FLY-TSK-029-0C: SESSION_NAME must be SURFACE_NAME",
+    ("lane_2a_records.py", "us-west-2"): "FLY-TSK-029-0A: region fallback",
+    ("lane_2b_home.py", "us-west-2"): "FLY-TSK-029-0B: region fallback",
+    ("lane_2e_corrections.py", "us-west-2"): "FLY-TSK-029-0E: region fallback",
+}
+ALLOWED |= set(KNOWN_DEBT)
+
 
 def _hits(path: Path, text: str):
     low = text.lower()
@@ -76,6 +90,12 @@ def test_every_python_module_the_function_ships_is_scanned_or_named():
     for p in TL.glob("*.py"):
         assert not list(_hits(p, p.read_text())), f"{p.relative_to(ROOT)} names an io-instance value"
     assert {"lambda_function.py", "contract.py", "settings.py"} <= shipped
+
+
+def test_known_debt_is_not_stale():
+    for (name, lit), owner in KNOWN_DEBT.items():
+        assert lit.lower() in (TL / name).read_text().lower(), (
+            f"{name} no longer contains {lit!r}: remove it from KNOWN_DEBT ({owner})")
 
 
 def test_the_guard_actually_detects_a_literal():
