@@ -331,6 +331,25 @@ def test_the_engine_would_report_what_the_validation_prevents(world):
     assert [u["record_ids"] for u in res["unapplied_corrections"]] == [["no-such-flight"]]
 
 
+def test_a_stale_trip_key_is_refused_not_written(world):
+    """A key is the id of the trip's first record and is recomputed on every read: list, change the key, answer with the old one."""
+    world.put(fl("k1", "2024-03-01", _SEA, _JFK), fl("k2", "2024-03-02", _JFK, _BOS))
+    trip = undecided()["trips"][0]
+    q = next(x for x in trip["questions"] if x["question_id"] == "q_return_not_recorded")
+    assert trip["key"] == "k1"
+    call("record_trip_correction", {"kind": "leave_out", "record_ids": ["k1"]})          # unrelated to this question, moves the key
+    assert [t["key"] for t in undecided()["trips"]] == ["k2"]
+    before = rows(world)
+    for dry in (True, False):
+        out = call("answer_trip_question", {"trip_key": "k1", "question_id": q["question_id"], "answer_id": "back_day_after",
+                                            "dry_run": dry})
+        assert out["success"] is False and out["error_envelope"]["code"] == "missing" and "k1" in out["error"]
+    assert rows(world) == before                                                         # nothing written onto anything
+    fresh = undecided()["trips"][0]                                                      # the fresh key answers fine
+    assert call("answer_trip_question", {"trip_key": fresh["key"], "question_id": q["question_id"],
+                                         "answer_id": "back_day_after"})["success"] is True
+
+
 # ------------------------------------------------------------------ reads and refusals
 def test_list_respects_range_and_limit_and_reports_finance_errors(world):
     world.put(*OPEN, *FUTURE_OPEN)

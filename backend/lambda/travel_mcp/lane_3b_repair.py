@@ -16,6 +16,10 @@ the correction is written (the engine reads the boundary as `recorded`); signals
 recomputed from the records every time, so they close by being answered. Retiring the correction reopens the
 question. The one question with no travel-side answer (q_home_not_recorded) stays open until finance has a home.
 
+A trip_key is the id of the trip's first record and is recomputed on every read, so it can go stale between the
+list and the answer. answer_trip_question therefore resolves the key afresh and refuses (missing) unless it still
+names a trip on which that question is open; nothing is written against a key that no longer resolves.
+
 Two checks the correction store does not make, made here before anything is written:
   * question_id must be one of contract.QUESTIONS' ids
   * every record id the correction names must exist (flights table or records table) and not be cancelled
