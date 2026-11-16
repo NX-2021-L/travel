@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Load deployment settings
+        run: python3 scripts/load_deployment_settings.py deploy/settings.env
       # The deploy role's trust policy admits refs/heads/main only, so on pull_request this
       # step cannot assume it. CI then degrades to the tests that do not import the private
       # package (reported loudly) instead of going red or silently skipping. On push to main
@@ -30,7 +32,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
-          aws-region: us-west-2
+          aws-region: ${{ env.AWS_REGION }}
       - name: Install test requirements (limited set when the private package is unreachable)
         run: |
           if [ "${{ steps.aws.outcome }}" != "success" ]; then
@@ -38,17 +40,17 @@ jobs:
             pip install pytest PyYAML --quiet
             exit 0
           fi
-          TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
+          TOKEN=$(aws codeartifact get-authorization-token --domain "${CODEARTIFACT_DOMAIN}" --domain-owner "${CODEARTIFACT_OWNER}" --region "${CODEARTIFACT_REGION}" --query authorizationToken --output text)
           echo "::add-mask::${TOKEN}"
           pip install -r tests/requirements.txt \
-            --extra-index-url "https://aws:${TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" --quiet
+            --extra-index-url "https://aws:${TOKEN}@${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/pypi/${CODEARTIFACT_REPOSITORY}/simple/" --quiet
       - name: pytest
         env:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
           AWS_SESSION_TOKEN: testing
         run: |
-          if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py; fi
+          if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py tests/test_settings_fail_closed.py tests/test_no_instance_values.py; fi
       - name: Caps snapshot drift check
         if: steps.aws.outcome == 'success'
         run: python3 scripts/emit_caps.py --check

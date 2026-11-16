@@ -11,7 +11,10 @@ from jwt.algorithms import RSAAlgorithm
 import test_e2e_lambda_handler as base  # reuses moto env + rpc helpers
 from test_e2e_lambda_handler import env, lf, payload, rpc  # noqa: F401
 
-IOG_KID, IOG_ISS, IOG_CLIENT = "iogkid", lf.IOGRAPH_ISSUER, lf.IOGRAPH_CLIENT_ID
+# The second issuer (the fleet manifest's pool); the function no longer carries its ids, tests pin their own.
+IOG_KID = "iogkid"
+IOG_ISS = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
+IOG_CLIENT = "6eh4u69l1mqk1m4hfjspeibla8"
 
 
 def _tok(priv, kid, iss, sub, client, use="access"):

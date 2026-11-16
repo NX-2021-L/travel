@@ -4,17 +4,24 @@
 Merges the function's CURRENT environment (JSON on stdin or $CURRENT_ENV) with
 non-empty values supplied by the deploy shell, so unspecified variables -- notably
 COGNITO_ALLOWED_SUBS -- are preserved.  Exits 3 (printing nothing on stdout) when a
-Cognito pool is configured but the resolved COGNITO_ALLOWED_SUBS is empty.
+required setting (contract.SETTINGS) is absent from the resolved environment, or a Cognito pool is
+configured but COGNITO_ALLOWED_SUBS is empty.
 Values are never printed except in the resolved JSON on stdout.
 """
 import json
 import os
 import sys
 
-KEYS = [
-    "TABLE_NAME", "RECORDS_TABLE_NAME", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS",
-    "IOGRAPH_ALLOWED_SUBS", "TRAVEL_WRITE_GROUPS",
-]
+import contract
+import settings
+
+# Every setting a deployment supplies is declared by the contract; nothing here names a deployment.
+KEYS = list(contract.SETTINGS)
+
+# Deploy-time settings the deploy script and workflow need (they never reach the function). Plan refuses
+# when one is absent, so a missing one stops the run before apply.
+DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEARTIFACT_OWNER",
+                   "CODEARTIFACT_REGION", "CODEARTIFACT_REPOSITORY", "PROBE_MCP_URL", "PROBE_SIGNIN_URL")
 
 # FLY-TSK-022: retired by the edge adoption. Stripped from the function env on every deploy so a
 # stale confidential-client secret or static key can never survive the merge with CURRENT_ENV.
@@ -25,8 +32,6 @@ DROPPED = ("COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_AP
 def resolve(current: dict, supplied: dict) -> dict:
     env = dict(current or {})
     env["MCP_TRANSPORT"] = "streamable_http"
-    env.setdefault("TABLE_NAME", "io-travel-flights")
-    env.setdefault("RECORDS_TABLE_NAME", "io-travel-records")  # FLY-TSK-041
     for k in KEYS:
         if supplied.get(k):
             env[k] = supplied[k]
@@ -34,9 +39,22 @@ def resolve(current: dict, supplied: dict) -> dict:
 
 
 def guard(env: dict) -> str:
+    """Non-empty message when the resolved environment must not be applied (FLY-TSK-028-0B, A-2).
+
+    Fail closed: any required contract setting absent from the resolved env stops the deploy
+    before apply. Names KEYS only. The Cognito allow-list guard below is preserved.
+    """
     if env.get("COGNITO_USER_POOL_ID") and not (env.get("COGNITO_ALLOWED_SUBS") or "").strip(" ,"):
         return "refusing to deploy: COGNITO_USER_POOL_ID is set but COGNITO_ALLOWED_SUBS is empty (would lock out the Cognito path)"
+    missing = settings.missing_required(env)
+    if missing:
+        return "refusing to deploy: required settings absent: " + ", ".join(sorted(missing))
     return ""
+
+
+def missing_deploy_settings(environ=None) -> list:
+    environ = os.environ if environ is None else environ
+    return [k for k in DEPLOY_SETTINGS if not (environ.get(k) or "").strip()]
 
 
 def diff_env(current: dict, resolved: dict) -> list:

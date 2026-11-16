@@ -61,42 +61,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Load deployment settings
+        run: python3 scripts/load_deployment_settings.py deploy/settings.env
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
-          aws-region: us-west-2
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # A required setting missing from the supplied + live environment makes this step exit 3: the run
+      # stops here and apply never starts (FLY-TSK-028-0B, A-2).
       - name: Plan (read-only; changes nothing)
         env:
-          TABLE_NAME: io-travel-flights
-          RECORDS_TABLE_NAME: io-travel-records
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
-          COGNITO_REGION: us-east-1
         run: python3 scripts/release_ops.py plan
 
       - name: Apply - publish restore point, then deploy
         id: apply
         env:
-          TABLE_NAME: io-travel-flights
-          RECORDS_TABLE_NAME: io-travel-records
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
           COGNITO_CLIENT_SECRET: ${{ secrets.COGNITO_CLIENT_SECRET }}
           COGNITO_DOMAIN: ${{ secrets.COGNITO_DOMAIN }}
-          COGNITO_REGION: us-east-1
           MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
           SERVER_BASE_URL: ${{ secrets.SERVER_BASE_URL }}
         run: |
           # A version snapshots code AND environment at publish time, so publishing BEFORE
           # deploy.sh captures the OLD release -- the restore point.
-          PRE=$(aws lambda publish-version --function-name io-travel-mcp-server --region us-west-2 \
+          PRE=$(aws lambda publish-version --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" \
                   --description "restore point before ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})" \
                   --query Version --output text)
           echo "restore point: version ${PRE}"
@@ -105,23 +104,23 @@ jobs:
 
       - name: Install check dependencies (emit_caps imports the lambda, which needs io-kit-mcp-edge)
         run: |
-          TOKEN=$(aws codeartifact get-authorization-token --domain io --domain-owner 356364570033 --region us-west-2 --query authorizationToken --output text)
+          TOKEN=$(aws codeartifact get-authorization-token --domain "${CODEARTIFACT_DOMAIN}" --domain-owner "${CODEARTIFACT_OWNER}" --region "${CODEARTIFACT_REGION}" --query authorizationToken --output text)
           echo "::add-mask::${TOKEN}"
           pip install -r backend/lambda/travel_mcp/requirements.txt \
-            --extra-index-url "https://aws:${TOKEN}@io-356364570033.d.codeartifact.us-west-2.amazonaws.com/pypi/io-kit/simple/" --quiet
+            --extra-index-url "https://aws:${TOKEN}@${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/pypi/${CODEARTIFACT_REPOSITORY}/simple/" --quiet
 
       - name: Verify (read-only, production)
         id: verify
         continue-on-error: true
         run: |
           fail=0
-          bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io || { echo "CHECK FAILED: mcp probe"; fail=1; }
-          aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
+          bash scripts/mcp_post_deploy_probe.sh "${PROBE_MCP_URL}" "${PROBE_SIGNIN_URL}" || { echo "CHECK FAILED: mcp probe"; fail=1; }
+          aws lambda get-function --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" \
             --query 'Configuration.{State:State,LastUpdateStatus:LastUpdateStatus,Runtime:Runtime,MemorySize:MemorySize,Timeout:Timeout}' || fail=1
-          STATE=$(aws lambda get-function --function-name io-travel-mcp-server --region us-west-2 \
+          STATE=$(aws lambda get-function --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" \
             --query 'Configuration.[State,LastUpdateStatus]' --output text | tr -s '[:space:]' ' ')
           [ "$STATE" = "Active Successful " ] || [ "$STATE" = "Active Successful" ] || { echo "CHECK FAILED: function state ($STATE)"; fail=1; }
-          aws lambda get-function-url-config --function-name io-travel-mcp-server --region us-west-2 \
+          aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" \
             --query 'FunctionUrl' --output text >/dev/null || { echo "CHECK FAILED: function url config"; fail=1; }
           python3 scripts/emit_caps.py --check || { echo "CHECK FAILED: emit_caps --check"; fail=1; }
           # Token-free: reads the DEPLOYED $LATEST artifact (after apply) via lambda:GetFunction.
@@ -141,7 +140,7 @@ jobs:
           VER="${{ steps.apply.outputs.pre_deploy_version }}"
           echo "verify failed at ${{ steps.verify.outputs.failed_at }}; restoring version ${VER}"
           python3 scripts/release_ops.py restore --version "${VER}"
-          bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io
+          bash scripts/mcp_post_deploy_probe.sh "${PROBE_MCP_URL}" "${PROBE_SIGNIN_URL}"
           END=$(date +%s)
           TTR=$(( END - ${{ steps.verify.outputs.failed_at }} ))
           echo "time_to_recover_seconds=${TTR}" >> "$GITHUB_OUTPUT"
@@ -161,11 +160,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Load deployment settings
+        run: python3 scripts/load_deployment_settings.py deploy/settings.env
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
-          aws-region: us-west-2
+          aws-region: ${{ env.AWS_REGION }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -173,4 +174,4 @@ jobs:
       - name: Undo - restore version onto $LATEST
         run: python3 scripts/release_ops.py restore --version "${{ inputs.rollback_to_version }}"
       - name: Probe the restored function
-        run: bash scripts/mcp_post_deploy_probe.sh https://travel.thepup.io/mcp https://connect.thepup.io
+        run: bash scripts/mcp_post_deploy_probe.sh "${PROBE_MCP_URL}" "${PROBE_SIGNIN_URL}"

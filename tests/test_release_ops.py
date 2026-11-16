@@ -22,7 +22,8 @@ def test_diff_env_keys_only():
 def test_resolve_env_plan_never_prints_values(monkeypatch, capsys):
     monkeypatch.setenv("CURRENT_ENV", '{"TABLE_NAME":"old-secret-value","COGNITO_CLIENT_SECRET":"zzz"}')
     monkeypatch.setattr(sys, "argv", ["resolve_env.py", "--plan"])
-    monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
+    for k in resolve_env.KEYS:  # a complete deployment: FLY-TSK-028-0B makes every required setting mandatory
+        monkeypatch.setenv(k, "supplied-" + k.lower())
     assert resolve_env.main() == 0
     out = capsys.readouterr().out
     assert "old-secret-value" not in out and "zzz" not in out
@@ -37,7 +38,7 @@ def test_highest_version_ignores_latest():
 
 def test_render_plan_contents():
     cfg = {"CodeSha256": "abc=", "LastModified": "2026-01-01T00:00:00.000+0000"}
-    out = ro.render_plan(cfg, 4, [("X", "added")], ["boto3"])
+    out = ro.render_plan(cfg, 4, [("X", "added")], ["boto3"], region="r-1", function="io-travel-mcp-server")
     for needle in ("io-travel-mcp-server", "abc=", "2026-01-01", "highest published version: 4", "added    X", "boto3"):
         assert needle in out
 
@@ -70,7 +71,7 @@ def test_deploys_are_serialized_and_never_cancelled():
 
 
 def test_records_table_name_defaults_and_survives_merge():
-    # FLY-TSK-041: mirrors TABLE_NAME.
-    assert resolve_env.resolve({}, {})["RECORDS_TABLE_NAME"] == "io-travel-records"
+    # FLY-TSK-041, tightened by FLY-TSK-028-0B: no default; supplied or live, never invented.
+    assert "RECORDS_TABLE_NAME" not in resolve_env.resolve({}, {})
     assert resolve_env.resolve({"RECORDS_TABLE_NAME": "live"}, {})["RECORDS_TABLE_NAME"] == "live"
     assert resolve_env.resolve({"RECORDS_TABLE_NAME": "live"}, {"RECORDS_TABLE_NAME": "new"})["RECORDS_TABLE_NAME"] == "new"

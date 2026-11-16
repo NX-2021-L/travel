@@ -1,4 +1,4 @@
-"""io-travel MCP Server — Agent-accessible flight data management.
+"""travel MCP Server — Agent-accessible flight data management.
 
 Exposes 5 tools via MCP streamable HTTP transport:
   - search_flights: filter and paginate flight records
@@ -8,7 +8,7 @@ Exposes 5 tools via MCP streamable HTTP transport:
 
 Architecture: Lambda Function URL → ASGI adapter → MCP StreamableHTTPSessionManager
 Auth: Cognito OAuth 2.1 (shared User Pool with Enceladus) or static bearer token fallback
-Data: DynamoDB table io-travel-flights with 3 GSIs
+Data: the DynamoDB flights table named by TABLE_NAME, with 3 GSIs
 """
 
 import asyncio
@@ -43,41 +43,44 @@ from io_kit_mcp_edge.jwks import fetch_https
 # Configuration
 # ---------------------------------------------------------------------------
 
-TABLE_NAME = os.environ.get("TABLE_NAME", "io-travel-flights")
-REGION = os.environ.get("AWS_REGION", "us-west-2")
+# FLY-TSK-028-0B (A-2): fail closed. Every deployment-naming value is a supplied setting (contract.SETTINGS);
+# with any required one absent this import raises SettingsError and the function refuses to start.
+import settings as _settings  # noqa: E402
+
+_S = _settings.load()
+TABLE_NAME = _S["TABLE_NAME"]
+RECORDS_TABLE_NAME = _S["RECORDS_TABLE_NAME"]
+SURFACE_NAME = _S["SURFACE_NAME"]
+FINANCE_READ_FUNCTION = _S["FINANCE_READ_FUNCTION"]
+REGION = _S["AWS_REGION"]
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "streamable_http")
 
 # Enceladus-pool internal door (DVP-TSK-903 dual issuer). Validated with
 # io_kit_mcp_edge.validate_bearer; the pool's client is bound by COGNITO_CLIENT_ID.
-COGNITO_USER_POOL_ID = os.environ.get("COGNITO_USER_POOL_ID", "")
-COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
-COGNITO_REGION = os.environ.get("COGNITO_REGION", "us-east-1")
+COGNITO_USER_POOL_ID = _S["COGNITO_USER_POOL_ID"]
+COGNITO_CLIENT_ID = _S["COGNITO_CLIENT_ID"]
+COGNITO_REGION = _S["COGNITO_REGION"]
 
-# FLY-TSK-022 (DVP-PLN-016 W2.1): Pattern B on the io-kit MCP edge. The edge fronts the
-# io-graph pool's PUBLIC PKCE client; there is no client secret anywhere in this service.
-BASE_URL = "https://travel.thepup.io"
-# The io-graph pool and its public client (from the fleet manifest); tests and the allow-list docs reference them.
-IOGRAPH_ISSUER = "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_y6bHKpNZN"
-IOGRAPH_CLIENT_ID = "6eh4u69l1mqk1m4hfjspeibla8"
-# Sign-in is the shared service https://connect.thepup.io (fleet manifest profile "thepup"); this edge only serves
-# the protected-resource metadata and the bearer gate.
+# FLY-TSK-022 (DVP-PLN-016 W2.1): Pattern B on the io-kit MCP edge. The edge fronts the public PKCE client of the
+# sign-in pool named by the shipped fleet manifest entry for SURFACE_NAME; there is no client secret anywhere here.
+# The edge's own pool, client and sign-in service come from that manifest; nothing here names them.
+# Optional: the public edge base URL. Absent behind the internal door.
+PUBLIC_BASE_URL = _S["PUBLIC_BASE_URL"]
 
 # Fail-closed human principal (orchestrator ruling E2-R10): the Cognito pool also
 # holds other users, so pool membership grants nothing. Only subs in this
 # allow-list may use the Cognito path (reads and writes); empty/unset = denied.
 COGNITO_ALLOWED_SUBS = [
-    x.strip() for x in os.environ.get("COGNITO_ALLOWED_SUBS", "").split(",") if x.strip()
+    x.strip() for x in _S["COGNITO_ALLOWED_SUBS"].split(",") if x.strip()
 ]
 
-# io-graph pool (think.thepup.io principal, DVP-TSK-903). Disabled when
-# IOGRAPH_POOL_ID is unset.  Own client binding and own owner allow-list.
+# Second issuer (the manifest's pool, DVP-TSK-903): own owner allow-list, IOGRAPH_ALLOWED_SUBS (optional).
 def _csv_env(name: str) -> List[str]:
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
 
 def _cors_origins() -> List[str]:
-    raw = os.environ.get("CORS_ALLOWED_ORIGINS")
-    return _csv_env("CORS_ALLOWED_ORIGINS") if raw is not None else ["https://think.thepup.io"]
+    return _csv_env("CORS_ORIGINS")  # supplied setting; unset = no browser origin is allowed
 
 
 # Optional additional write requirement: a Cognito group. Empty (default) means
@@ -116,9 +119,9 @@ def _fetch_jwks(uri: str) -> Dict[str, Any]:
 
 
 def _edge_config() -> EdgeConfig:
-    # 0.2: base URL, mount (/mcp), issuer, client id, claim profile, JWKS and the sign-in service (https://connect.thepup.io)
+    # 0.2: base URL, mount (/mcp), issuer, client id, claim profile, JWKS and the sign-in service
     # all come from the shipped fleet manifest. The edge no longer serves /register or /authorize (they answer 401).
-    return EdgeConfig(connector="io-travel", fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger)
+    return EdgeConfig(connector=SURFACE_NAME, fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger)
 
 
 _EDGE = None
@@ -141,7 +144,8 @@ def _enceladus_config() -> Optional[EdgeConfig]:
     iss = f"https://cognito-idp.{region}.amazonaws.com/{COGNITO_USER_POOL_ID}"
     if _ENC_CFG is None or _ENC_CFG.issuer != iss or _ENC_CFG.client_id != COGNITO_CLIENT_ID:
         _ENC_CFG = EdgeConfig(
-            base_url=BASE_URL, issuer=iss, client_id=COGNITO_CLIENT_ID, sign_in_service=BASE_URL,
+            base_url=PUBLIC_BASE_URL or iss, issuer=iss, client_id=COGNITO_CLIENT_ID,
+            sign_in_service=PUBLIC_BASE_URL or iss,
             jwks_uri=f"{iss}/.well-known/jwks.json", mount_path="/",
             fetch_jwks=lambda uri: _fetch_jwks(uri), logger=logger,
         )
@@ -238,11 +242,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-try:  # the contract ships beside this file; see deploy.sh (it must copy every module, not only this one)
-    import contract
-except ImportError:  # pragma: no cover - a package that omitted contract.py serves the five flight tools only
-    contract = None
-    logging.getLogger().error("contract.py missing from the package: serving the five flight tools only")
+import contract  # FLY-TSK-028-0B: hard import (settings imports it too); a package without it refuses to start
 
 
 MUTABLE_FIELDS = {
@@ -297,7 +297,7 @@ def _resolved_call(action: str, args: dict, key: str, underlying: list, kinds: l
     principal = _PRINCIPAL.get() or {}
     schema = next((t.inputSchema for t in _tool_specs() if t.name == action), {})
     call = {
-        "v": 1, "surface": "io-travel", "action": action, "arguments": args,
+        "v": 1, "surface": SURFACE_NAME, "action": action, "arguments": args,
         "schemaHash": _schema_hash(schema),
         "principal": principal.get("id"),
         "underlying": underlying,
@@ -723,7 +723,7 @@ async def _create_flight(args: dict) -> list:
 # MCP Server setup
 # ---------------------------------------------------------------------------
 
-app = Server("io-travel")
+app = Server(SURFACE_NAME)
 
 _TOOL_HANDLERS = {
     "search_flights": _search_flights,
@@ -943,7 +943,7 @@ _DRY_RUN_TOOLS: tuple = WRITE_TOOLS  # tools with server-side dry_run (DVP-TSK-9
 
 
 def build_caps() -> Dict[str, Any]:
-    """The io-travel capabilities document: parity caps.schema 1.1.0 (orchestrator ruling E2-R11)."""
+    """The capabilities document for this deployment's surface: parity caps.schema 1.1.0 (orchestrator ruling E2-R11)."""
     actions = []
     for t in _tool_specs():
         actions.append({
@@ -956,13 +956,13 @@ def build_caps() -> Dict[str, Any]:
             "via": "top-level",
             "dryRun": t.name in _DRY_RUN_TOOLS,
         })
-    return {"schemaVersion": "1.1.0", "surface": "io-travel", "generatedAt": _now_iso(), "actions": actions}
+    return {"schemaVersion": "1.1.0", "surface": SURFACE_NAME, "generatedAt": _now_iso(), "actions": actions}
 
 
 def build_permission_manifest() -> Dict[str, Any]:
     return {
         "v": 1,
-        "surface": "io-travel",
+        "surface": SURFACE_NAME,
         "principals": {
             "internal-key": {"access": "all"},
             "cognito": {
@@ -1183,7 +1183,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 
 def _with_cors(event: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, Any]:
-    """Echo ACAO only for allow-listed browser origins (default https://think.thepup.io)."""
+    """Echo ACAO only for allow-listed browser origins (CORS_ORIGINS)."""
     origin = ({k.lower(): v for k, v in (event.get("headers") or {}).items()}).get("origin", "")
     if origin and origin in _cors_origins() and isinstance(resp, dict):
         hdrs = dict(resp.get("headers") or {})
