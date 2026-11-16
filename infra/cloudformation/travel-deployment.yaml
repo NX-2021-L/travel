@@ -44,7 +44,7 @@ Parameters:
     Description: Optional object version, so a new package is a deliberate, visible change.
   McpTransport:
     Type: String
-    Default: http
+    Default: streamable_http
     Description: Value of the MCP_TRANSPORT environment variable.
   CognitoUserPoolId:
     Type: String

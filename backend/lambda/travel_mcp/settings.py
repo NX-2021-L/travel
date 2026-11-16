@@ -28,10 +28,23 @@ def _env(environ):
     return os.environ if environ is None else environ
 
 
+def _required_here(spec, mode) -> bool:
+    """True/False apply to every door; a string names the one DOOR_MODE that requires the setting."""
+    req = spec["required"]
+    return req == mode if isinstance(req, str) else bool(req)
+
+
 def missing_required(environ=None) -> list:
-    """Keys of required contract settings that are absent or blank in `environ`."""
+    """Keys of contract settings required under this environment's DOOR_MODE that are absent or blank.
+
+    A door-named setting is required on that door only. An absent or unknown DOOR_MODE is read as public,
+    the strictest reading: door.py refuses to start on it regardless (lane 1A, A-2; FLY-TSK-043).
+    """
     env = _env(environ)
-    return [k for k, spec in contract.SETTINGS.items() if spec["required"] and _blank(env.get(k))]
+    mode = (env.get("DOOR_MODE") or "").strip()
+    if mode not in ("public", "internal"):
+        mode = "public"
+    return [k for k, spec in contract.SETTINGS.items() if _required_here(spec, mode) and _blank(env.get(k))]
 
 
 def missing_runtime(environ=None) -> list:
