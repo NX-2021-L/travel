@@ -42,7 +42,11 @@ NANA = {
 THIRD = {**NANA, "SURFACE_NAME": "third", "DOOR_MODE": "public", "PUBLIC_BASE_URL": "https://third.invalid",
          "CORS_ORIGINS": "https://a.invalid,https://b.invalid", "AWS_REGION": "ap-south-1", "TRAVEL_WRITE_GROUPS": "",
          "TABLE_NAME": "third-flights", "RECORDS_TABLE_NAME": "third-records", "COGNITO_REGION": "ap-south-1"}
-SETTINGS_SETS = {"io": IO, "nana": NANA, "third": THIRD}
+# FLY-TSK-043: an internal deployment that supplies NONE of the five (sign-in pool, client, region, allow-list, finance).
+_FIVE = {"COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "FINANCE_READ_FUNCTION"}
+BARE = {k: v for k, v in NANA.items() if k not in _FIVE}
+BARE.update({"AWS_REGION": "sa-east-1", "SURFACE_NAME": "bare-x", "TABLE_NAME": "bare-flights", "RECORDS_TABLE_NAME": "bare-records"})
+SETTINGS_SETS = {"io": IO, "nana": NANA, "third": THIRD, "bare": BARE}
 
 _GENERATE = """
 import asyncio, json, sys

@@ -15,16 +15,19 @@ CONTRACT_VERSION = "1.0.0"
 
 # --------------------------------------------------------------------------- settings
 # KEYS only. Every value comes from the deployment's environment (BRD B1, A-2).
+# "required" is True (every door), False (never), or the name of the DOOR_MODE that requires it: "public"
+# means required on a public edge and optional behind the internal door, the convention PUBLIC_BASE_URL and
+# CORS_ORIGINS already follow (FLY-TSK-043). settings.missing_required() is the one reader.
 SETTINGS = {
     "TABLE_NAME": {"required": True, "purpose": "the flights table"},
     "RECORDS_TABLE_NAME": {"required": True, "purpose": "the records table (hash pk, range sk, GSI area-index)"},
     "SURFACE_NAME": {"required": True, "purpose": "the surface and connector name this deployment serves"},
-    "FINANCE_READ_FUNCTION": {"required": True, "purpose": "finance's HTTPS Function URL, called over HTTPS for the residence read; finance refuses a direct Lambda invoke (finding DOC-4CEAAE4B8CB7)"},
+    "FINANCE_READ_FUNCTION": {"required": "public", "purpose": "finance's HTTPS Function URL, called over HTTPS for the residence read; finance refuses a direct Lambda invoke (finding DOC-4CEAAE4B8CB7)"},
     "FINANCE_READ_CREDENTIAL": {"required": False, "purpose": "the bearer credential for that Function URL call; never committed, provisioned on the function by its owner; absent, a home read refuses HOME_UNAVAILABLE (cause config)"},
-    "COGNITO_USER_POOL_ID": {"required": True, "purpose": "sign-in pool"},
-    "COGNITO_CLIENT_ID": {"required": True, "purpose": "sign-in client"},
-    "COGNITO_REGION": {"required": True, "purpose": "sign-in pool region"},
-    "COGNITO_ALLOWED_SUBS": {"required": True, "purpose": "principals allowed to call"},
+    "COGNITO_USER_POOL_ID": {"required": "public", "purpose": "sign-in pool"},
+    "COGNITO_CLIENT_ID": {"required": "public", "purpose": "sign-in client"},
+    "COGNITO_REGION": {"required": "public", "purpose": "sign-in pool region"},
+    "COGNITO_ALLOWED_SUBS": {"required": "public", "purpose": "principals allowed to call"},
     "IOGRAPH_ALLOWED_SUBS": {"required": False, "purpose": "second issuer's allowed principals"},
     "TRAVEL_WRITE_GROUPS": {"required": False, "purpose": "groups allowed to write"},
     "PUBLIC_BASE_URL": {"required": False, "purpose": "public edge base URL; absent behind the internal door"},
