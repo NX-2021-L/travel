@@ -51,6 +51,7 @@ _S = _settings.load()
 import door as _door  # noqa: E402  FLY-TSK-028-0D: which door this deployment answers through; absent mode refuses to start
 
 DOOR_MODE, INTERNAL_INVOKER_ROLE = _door.load()
+INTERNAL_DEPLOY_ROLE = _door.deploy_role()
 TABLE_NAME = _S["TABLE_NAME"]
 RECORDS_TABLE_NAME = _S["RECORDS_TABLE_NAME"]
 SURFACE_NAME = _S["SURFACE_NAME"]
@@ -1182,9 +1183,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "isBase64Encoded": False,
         }
     try:  # A-4: the other door's events are refused in both modes
-        shape = _door.admit(event, DOOR_MODE, INTERNAL_INVOKER_ROLE)
+        shape = _door.admit(event, DOOR_MODE, INTERNAL_INVOKER_ROLE, INTERNAL_DEPLOY_ROLE)
     except (_door.NonHttpEventRefused, _door.HttpEventRefused, _door.InvokerRefused) as exc:
         return _door.refusal(exc)
+    if shape == "health":  # LD-39: one read-only liveness answer; touches no tool, table or network
+        return _door.health(event, SURFACE_NAME)
     if shape == "direct":  # internal door: the named role, straight to the tools (no bearer; IAM is the gate)
         return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE), context)
     door = _enceladus_door(event)

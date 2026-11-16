@@ -28,6 +28,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Role ARN the internal door answers (INTERNAL_INVOKER_ROLE); required when PublicEdge is false.
+  InternalDeployRole:
+    Type: String
+    Default: ""
+    Description: Role ARN answered the one health read and nothing else (INTERNAL_DEPLOY_ROLE); optional.
   CodeS3Bucket:
     Type: String
     Description: Bucket holding the function package.
@@ -60,6 +64,8 @@ Parameters:
 
 Conditions:
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
+  GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]]]
+  GrantsDeployer: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalDeployRole, ""]]]
   HasCodeVersion: !Not [!Equals [!Ref CodeS3ObjectVersion, ""]]
 
 Resources:
@@ -183,6 +189,7 @@ Resources:
           MCP_TRANSPORT: !Ref McpTransport
           DOOR_MODE: !If [IsPublicEdge, public, internal]
           INTERNAL_INVOKER_ROLE: !Ref InternalInvokerRole
+          INTERNAL_DEPLOY_ROLE: !Ref InternalDeployRole
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
           COGNITO_CLIENT_ID: !Ref CognitoClientId
           COGNITO_REGION: !Ref CognitoRegion
@@ -212,6 +219,24 @@ Resources:
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
+
+  # Internal door only. THE authorization boundary: Lambda does not attest the caller inside an event, so the
+  # in-function role check is a tripwire; these resource-policy grants (one role each, no wildcard) are the gate.
+  InternalInvokerInvoke:
+    Type: AWS::Lambda::Permission
+    Condition: GrantsInvoker
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunction
+      Principal: !Ref InternalInvokerRole
+
+  InternalDeployerInvoke:
+    Type: AWS::Lambda::Permission
+    Condition: GrantsDeployer
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunction
+      Principal: !Ref InternalDeployRole
 
 Outputs:
   FlightsTableName:

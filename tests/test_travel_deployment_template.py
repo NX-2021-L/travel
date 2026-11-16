@@ -73,6 +73,9 @@ def test_records_table_single_table_with_area_index():
     assert _gsis(p) == {"area-index": (["area_id", "date_iso"], "ALL")}
 
 
+INTERNAL_GRANTS = {"InternalInvokerInvoke", "InternalDeployerInvoke"}
+
+
 def test_function_url_and_permission_only_for_public_edge():
     assert T["Conditions"]["IsPublicEdge"] == {"Fn::Equals": [{"Ref": "PublicEdge"}, "true"]}
     assert T["Parameters"]["PublicEdge"]["Default"] == "false"
@@ -80,9 +83,10 @@ def test_function_url_and_permission_only_for_public_edge():
     assert guarded == {"FunctionUrl", "FunctionUrlPublicInvoke"}
     assert R["FunctionUrl"]["Type"] == "AWS::Lambda::Url"
     assert R["FunctionUrlPublicInvoke"]["Type"] == "AWS::Lambda::Permission"
-    # no other resource of either type exists unguarded
+    # no other resource of either type exists unguarded; the two internal-door grants (FLY-TSK-028-0D) are
+    # scoped to a named role and are absent for a public edge (asserted in the tests below)
     for k, v in R.items():
-        if v["Type"] in ("AWS::Lambda::Url", "AWS::Lambda::Permission"):
+        if v["Type"] in ("AWS::Lambda::Url", "AWS::Lambda::Permission") and k not in INTERNAL_GRANTS:
             assert v.get("Condition") == "IsPublicEdge", k
     assert T["Outputs"]["FunctionUrl"]["Condition"] == "IsPublicEdge"
 
@@ -150,3 +154,25 @@ def test_function_mode_follows_the_edge_parameter():
     v = R["McpFunction"]["Properties"]["Environment"]["Variables"]
     assert v["DOOR_MODE"] == {"Fn::If": ["IsPublicEdge", "public", "internal"]}
     assert "INTERNAL_INVOKER_ROLE" in v
+
+
+# ---- FLY-TSK-028-0D: the explicit InvokeFunction grants are the authorization boundary for an internal function ----
+def test_internal_invoke_grants_are_scoped_to_the_named_roles_only():
+    for name, param in (("InternalInvokerInvoke", "InternalInvokerRole"), ("InternalDeployerInvoke", "InternalDeployRole")):
+        res = R[name]
+        p = res["Properties"]
+        assert res["Type"] == "AWS::Lambda::Permission"
+        assert p["Action"] == "lambda:InvokeFunction"
+        assert p["Principal"] == {"Ref": param}  # one named role, never a wildcard
+        assert "FunctionUrlAuthType" not in p
+        cond = T["Conditions"][res["Condition"]]
+        assert cond["Fn::And"][0] == {"Fn::Not": [{"Fn::Condition": "IsPublicEdge"}]}  # absent for a public edge
+        assert T["Parameters"][param]["Default"] == ""  # an unset role grants nobody
+
+
+def test_no_invoke_permission_has_a_wildcard_principal_outside_the_public_edge():
+    for name, res in R.items():
+        if res["Type"] == "AWS::Lambda::Permission" and res["Properties"].get("Principal") == "*":
+            assert res.get("Condition") == "IsPublicEdge", name
+    assert R["FunctionUrlPublicInvoke"]["Properties"]["Principal"] == "*" and "InternalInvokerInvoke" not in {
+        k for k, v in R.items() if v.get("Condition") == "IsPublicEdge"}
