@@ -38,8 +38,22 @@ pip install \
   --quiet
 unset CODEARTIFACT_TOKEN
 
-# Copy function code
-cp "${SCRIPT_DIR}/lambda_function.py" "${BUILD_DIR}/"
+# Copy function code: EVERY *.py module in this directory ships, except the deploy-time
+# helpers listed below (they run on the runner, not in the Lambda). A lane that adds a
+# module (contract.py, lane_*.py) is packaged without touching this script (FLY-TSK-040).
+# tests/test_deploy_packaging.py executes this block; keep the BEGIN/END markers.
+# BEGIN package-modules
+DEPLOY_ONLY_HELPERS="resolve_env.py"
+SHIPPED_MODULES=()
+for module_path in "${SCRIPT_DIR}"/*.py; do
+  module_name="$(basename "${module_path}")"
+  case " ${DEPLOY_ONLY_HELPERS} " in *" ${module_name} "*) continue ;; esac
+  cp "${module_path}" "${BUILD_DIR}/"
+  SHIPPED_MODULES+=("${module_name}")
+done
+[ "${#SHIPPED_MODULES[@]}" -gt 0 ] || { echo "ABORT: no modules to package"; exit 4; }
+log "Packaged ${#SHIPPED_MODULES[@]} modules: ${SHIPPED_MODULES[*]}"
+# END package-modules
 
 # Create zip
 cd "${BUILD_DIR}"
