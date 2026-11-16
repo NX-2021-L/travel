@@ -75,6 +75,7 @@ jobs:
       - name: Plan (read-only; changes nothing)
         env:
           TABLE_NAME: io-travel-flights
+          RECORDS_TABLE_NAME: io-travel-records
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
           COGNITO_REGION: us-east-1
@@ -84,6 +85,7 @@ jobs:
         id: apply
         env:
           TABLE_NAME: io-travel-flights
+          RECORDS_TABLE_NAME: io-travel-records
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
           COGNITO_CLIENT_SECRET: ${{ secrets.COGNITO_CLIENT_SECRET }}

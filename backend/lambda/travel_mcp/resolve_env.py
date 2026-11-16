@@ -12,7 +12,7 @@ import os
 import sys
 
 KEYS = [
-    "TABLE_NAME", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS",
+    "TABLE_NAME", "RECORDS_TABLE_NAME", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS",
     "IOGRAPH_ALLOWED_SUBS", "TRAVEL_WRITE_GROUPS",
 ]
 
@@ -26,6 +26,7 @@ def resolve(current: dict, supplied: dict) -> dict:
     env = dict(current or {})
     env["MCP_TRANSPORT"] = "streamable_http"
     env.setdefault("TABLE_NAME", "io-travel-flights")
+    env.setdefault("RECORDS_TABLE_NAME", "io-travel-records")  # FLY-TSK-041
     for k in KEYS:
         if supplied.get(k):
             env[k] = supplied[k]
