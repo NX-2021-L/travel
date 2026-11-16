@@ -1,0 +1,18 @@
+{
+  "_comment": "Fixture of the finance residence-period service read (DOC-4CEAAE4B8CB7 s3-s5). Shapes only: placeholder uids and codes, no real address, label, street or postal code. Finance returns state and country only.",
+  "success": true,
+  "tool": "finance.residence_periods",
+  "result": {
+    "periods": [
+      {"effective_from": "2021-01-01", "effective_to": "2022-03-01", "end_status": "ended", "residence_uid": "res-a", "tenure": "rented", "evidence": "documented", "state": "S1", "country": "ZZ"},
+      {"effective_from": "2022-03-01", "effective_to": "2023-06-15", "end_status": "ended", "residence_uid": "res-b", "tenure": "owned", "evidence": "documented", "state": "S2", "country": "ZZ"},
+      {"effective_from": "2023-09-01", "effective_to": null, "end_status": "end_unknown", "residence_uid": "res-c", "tenure": "room", "evidence": "stated", "state": "S3", "country": "ZZ"},
+      {"effective_from": "2024-02-10", "effective_to": null, "end_status": "ongoing", "residence_uid": "res-d", "tenure": "owned", "evidence": "documented", "state": "S4", "country": "ZZ"}
+    ],
+    "gaps": [
+      {"from": "2023-06-15", "to": "2023-08-31"}
+    ],
+    "count": 4,
+    "as_of": "2026-11-15"
+  }
+}
