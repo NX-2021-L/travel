@@ -141,7 +141,9 @@ def test_resolve_env_preserves_allow_list():
     env = resolve_env.resolve(cur, {"TRAVEL_WRITE_GROUPS": "g", "COGNITO_CLIENT_SECRET": "s"})
     assert env["COGNITO_ALLOWED_SUBS"] == "a,b" and env["EXTRA"] == "keep" and env["TRAVEL_WRITE_GROUPS"] == "g"
     assert "COGNITO_CLIENT_SECRET" not in env and "COGNITO_CLIENT_SECRET" not in resolve_env.resolve({"COGNITO_CLIENT_SECRET": "old"}, {})
-    assert resolve_env.guard(env) == ""
+    # FLY-TSK-028-0B: complete once every required setting is supplied; absent ones are refused (tests/test_settings_fail_closed.py)
+    complete = {k: env.get(k) or "x" for k in resolve_env.KEYS}
+    assert resolve_env.guard(complete) == ""
     assert resolve_env.resolve(cur, {"COGNITO_ALLOWED_SUBS": "z"})["COGNITO_ALLOWED_SUBS"] == "z"
 
 
@@ -151,7 +153,7 @@ def test_resolve_env_guard_refuses_empty_allow_list():
     r = subprocess.run([sys.executable, str(D / "resolve_env.py")], capture_output=True,
                        env={"CURRENT_ENV": json.dumps({"COGNITO_USER_POOL_ID": "p"}), "PATH": os.environ["PATH"]})
     assert r.returncode == 3 and r.stdout == b""
-    assert resolve_env.guard(resolve_env.resolve({}, {})) == ""
+    assert "required settings absent" in resolve_env.guard(resolve_env.resolve({}, {}))  # FLY-TSK-028-0B: no pool is no longer a pass
 
 
 def test_root_path_without_auth_is_rejected(env):
