@@ -143,8 +143,8 @@ def _author():
 
 def _build_item(args, kind, when, ids):
     stamp = {"author": _author()}
-    if args.get("session"):  # the session is optional; absent means the attribute is absent
-        stamp["session"] = args["session"]
+    if _lf().stamp_session(args):  # the session is optional; absent means the attribute is absent
+        stamp["session"] = _lf().stamp_session(args)
     created = _now()
     keys = contract.record_keys(RECORD_KIND, [kind, when, ",".join(ids), created])
     item = {**keys, "kind": RECORD_KIND, "correction_kind": kind, "status": "active",
@@ -214,8 +214,8 @@ async def retire_trip_correction(arguments):
             return lf._success(_present(item))
         now = _now()
         sets = {"status": "retired", "retired_at": now, "retired_by": who, "updated_at": now}
-        if args.get("session"):
-            sets["retired_session"] = args["session"]
+        if lf.stamp_session(args):
+            sets["retired_session"] = lf.stamp_session(args)
         if args.get("reason"):
             sets["retire_reason"] = args["reason"]
         if dry_run:
