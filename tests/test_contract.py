@@ -206,6 +206,8 @@ def test_served_tools_caps_and_manifest():
 def test_unimplemented_handlers_name_their_lane():
     lf = _lf()
     for name, lane in c.TOOL_LANES.items():
+        if lf._TOOL_HANDLERS[name].__module__ != lf.__name__:
+            continue  # a lane has landed its handler; its own tests cover it
         out = asyncio.run(lf._TOOL_HANDLERS[name]({}))
         doc = json.loads(out[0].text)
         assert doc["success"] is False and doc["error_envelope"]["code"] == "not_implemented", name
