@@ -67,3 +67,10 @@ def test_deploy_path_has_four_steps_in_order():
 
 def test_deploys_are_serialized_and_never_cancelled():
     assert WF["concurrency"] == {"group": "travel-mcp-deploy", "cancel-in-progress": False}
+
+
+def test_records_table_name_defaults_and_survives_merge():
+    # FLY-TSK-041: mirrors TABLE_NAME.
+    assert resolve_env.resolve({}, {})["RECORDS_TABLE_NAME"] == "io-travel-records"
+    assert resolve_env.resolve({"RECORDS_TABLE_NAME": "live"}, {})["RECORDS_TABLE_NAME"] == "live"
+    assert resolve_env.resolve({"RECORDS_TABLE_NAME": "live"}, {"RECORDS_TABLE_NAME": "new"})["RECORDS_TABLE_NAME"] == "new"
