@@ -118,3 +118,56 @@ def test_handler_internal_serves_named_role(lf, monkeypatch):
     assert resp["statusCode"] == 200
     assert "search_flights" in {t["name"] for t in json.loads(resp["body"])["result"]["tools"]}
     assert lf.lambda_handler({**DIRECT, "invoker_role": "other"}, None)["statusCode"] == 403
+
+
+# ---- LD-39: one health read, read-only; the deploy role gets that and nothing else ----
+DEPLOY = "arn:aws:iam::000000000000:role/test-deployer"
+PING = {"invoker_role": DEPLOY, "mcp": {"jsonrpc": "2.0", "id": 7, "method": "ping"}}
+
+
+def test_health_read_answered_to_deploy_role_and_to_invoker():
+    assert door.admit(PING, "internal", ROLE, DEPLOY) == "health"
+    assert door.admit({**PING, "invoker_role": ROLE}, "internal", ROLE, DEPLOY) == "health"
+
+
+def test_deploy_role_is_answered_nothing_else():
+    for method in ("tools/list", "tools/call", "initialize", ""):
+        ev = {"invoker_role": DEPLOY, "mcp": {"jsonrpc": "2.0", "id": 1, "method": method}}
+        with pytest.raises(door.InvokerRefused):
+            door.admit(ev, "internal", ROLE, DEPLOY)
+
+
+def test_health_is_refused_to_an_unnamed_role_and_in_public_mode():
+    with pytest.raises(door.InvokerRefused):
+        door.admit({**PING, "invoker_role": "other"}, "internal", ROLE, DEPLOY)
+    with pytest.raises(door.InvokerRefused):  # no deploy role configured: the claim matches nothing
+        door.admit(PING, "internal", ROLE, "")
+    with pytest.raises(door.NonHttpEventRefused):
+        door.admit(PING, "public", "", DEPLOY)
+
+
+def test_health_answer_is_minimal_and_carries_no_person_data():
+    out = door.health(PING, "some-surface")
+    assert out == {"jsonrpc": "2.0", "id": 7, "result": {"status": "ok", "door": "internal", "surface": "some-surface"}}
+
+
+def test_health_does_no_io():
+    src = (D / "door.py").read_text()
+    assert "boto3" not in src and "urllib" not in src and "requests" not in src
+
+
+def test_the_role_claim_is_a_tripwire_not_an_authorization_boundary():
+    # Documented in door.py and asserted here so nobody reads the refusals above as isolation: Lambda does not
+    # attest the caller, so a caller able to invoke can assert any role string. The resource policy is the gate.
+    assert "DECLARED CLAIM" in (D / "door.py").read_text()
+    assert door.admit({"invoker_role": ROLE, "mcp": {"method": "tools/list"}}, "internal", ROLE) == "direct"
+
+
+def test_handler_health_read(lf, monkeypatch):
+    monkeypatch.setattr(lf, "DOOR_MODE", "internal")
+    monkeypatch.setattr(lf, "INTERNAL_INVOKER_ROLE", ROLE)
+    monkeypatch.setattr(lf, "INTERNAL_DEPLOY_ROLE", DEPLOY)
+    out = lf.lambda_handler(PING, None)
+    assert out["result"]["status"] == "ok" and out["id"] == 7
+    r = lf.lambda_handler({"invoker_role": DEPLOY, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}}, None)
+    assert r["statusCode"] == 403

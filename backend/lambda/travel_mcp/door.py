@@ -10,6 +10,16 @@ Lambda does not attest the caller inside the event, so the role is a declared cl
 setting; the enforcing gate is the function's resource policy, which the template grants to nobody
 publicly when the deployment is internal. Messages name keys, never values. Stdlib only.
 
+IMPORTANT: `invoker_role` is a DECLARED CLAIM, not an attested identity. Lambda does not tell the function
+who invoked it, so anyone able to invoke at all can write any role string. The claim check is a
+misconfiguration tripwire (defence in depth), NOT an authorization boundary: the only real gate is the
+function's resource policy (the template's InvokeFunction grants, scoped to the named roles). A test that
+a wrong claim is refused proves the tripwire, never isolation between deployments.
+
+Health read (FLY-TSK-028-0D, BRD LD-39): the JSON-RPC method "ping" is answered by door.health() and never
+reaches a tool, a table or the network: read-only, no person's data. The role named by INTERNAL_DEPLOY_ROLE
+(optional) is answered that read and nothing else; INTERNAL_INVOKER_ROLE gets the tools as well.
+
 Direct event shape: {"invoker_role": "<role arn>", "mcp": {<one JSON-RPC request>}}.
 """
 import json
@@ -20,7 +30,9 @@ import settings
 MODE_KEY = "DOOR_MODE"
 ROLE_KEY = "INTERNAL_INVOKER_ROLE"
 MODES = ("public", "internal")
-DOOR_KEYS = (MODE_KEY, ROLE_KEY)
+DEPLOY_ROLE_KEY = "INTERNAL_DEPLOY_ROLE"
+HEALTH_METHOD = "ping"
+DOOR_KEYS = (MODE_KEY, ROLE_KEY, DEPLOY_ROLE_KEY)
 
 
 class DoorError(settings.SettingsError):
@@ -51,13 +63,18 @@ def load(environ=None):
     return mode, role
 
 
+def deploy_role(environ=None) -> str:
+    env = os.environ if environ is None else environ
+    return str(env.get(DEPLOY_ROLE_KEY) or "").strip()
+
+
 def is_http_shaped(event) -> bool:
     rc = event.get("requestContext") if isinstance(event, dict) else None
     return isinstance(rc, dict) and bool(rc.get("http"))
 
 
-def admit(event, mode, role):
-    """Return "http" or "direct" when the event may be served in this mode; raise a refusal otherwise."""
+def admit(event, mode, role, deploy=""):
+    """Return "http", "direct" or "health" when the event may be served in this mode; raise a refusal otherwise."""
     http = is_http_shaped(event)
     if mode == "public":
         if not http:
@@ -65,9 +82,20 @@ def admit(event, mode, role):
         return "http"
     if http:
         raise HttpEventRefused("internal door refuses an HTTP-shaped event")
-    if not role or event.get("invoker_role") != role or not isinstance(event.get("mcp"), dict):
-        raise InvokerRefused("internal door answers only a direct event from the named role")
+    claimed, mcp = event.get("invoker_role"), event.get("mcp")
+    if not isinstance(mcp, dict) or not claimed or claimed not in {r for r in (role, deploy) if r}:
+        raise InvokerRefused("internal door answers only a direct event from a named role")
+    if mcp.get("method") == HEALTH_METHOD:
+        return "health"
+    if claimed != role:  # the deploy role is answered the health read and nothing else
+        raise InvokerRefused("the deploy role is answered the health read only")
     return "direct"
+
+
+def health(event, surface) -> dict:
+    """The one health read: alive and answering through the internal door. No I/O, no person's data."""
+    rid = (event.get("mcp") or {}).get("id")
+    return {"jsonrpc": "2.0", "id": rid, "result": {"status": "ok", "door": "internal", "surface": surface}}
 
 
 def refusal(exc) -> dict:
