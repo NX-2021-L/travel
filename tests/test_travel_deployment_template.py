@@ -176,3 +176,58 @@ def test_no_invoke_permission_has_a_wildcard_principal_outside_the_public_edge()
             assert res.get("Condition") == "IsPublicEdge", name
     assert R["FunctionUrlPublicInvoke"]["Properties"]["Principal"] == "*" and "InternalInvokerInvoke" not in {
         k for k, v in R.items() if v.get("Condition") == "IsPublicEdge"}
+
+
+# ---- FLY-TSK-031-0A, A-14 (lane 3C): with the public edge off, NO internal function has a public grant ----
+def _public_grants(resources, public_edge, conditions=None):
+    """Names of resources, created when PublicEdge == public_edge, that grant the function to the public:
+    a Function URL, or a permission whose principal is `*` or that names a Function URL auth type. Extends
+    the 0D loader and _created evaluator above; there is no second parser."""
+    conditions = T["Conditions"] if conditions is None else conditions
+    out = []
+    for name, res in resources.items():
+        cond = res.get("Condition")
+        # IsPublicEdge is evaluated; any other condition (the internal grants' GrantsInvoker/GrantsDeployer)
+        # is conservatively treated as "may be created", so a public grant behind it is still caught.
+        gated = bool(cond) and conditions[cond] == {"Fn::Equals": [{"Ref": "PublicEdge"}, "true"]}
+        created = (public_edge == "true") if gated else True
+        p = res.get("Properties", {})
+        public = res["Type"] == "AWS::Lambda::Url" or (
+            res["Type"] == "AWS::Lambda::Permission" and (p.get("Principal") in ("*", {"AWS": "*"}) or "FunctionUrlAuthType" in p))
+        if created and public:
+            out.append(name)
+    return out
+
+
+def test_with_the_public_edge_off_no_function_url_and_no_public_invoke_permission_is_created():
+    assert T["Parameters"]["PublicEdge"]["Default"] == "false"
+    assert _public_grants(R, "false") == []
+    assert sorted(_public_grants(R, "true")) == ["FunctionUrl", "FunctionUrlPublicInvoke"]  # and the switch is real
+    assert _created("FunctionUrl", "false") is False and _created("FunctionUrlPublicInvoke", "false") is False
+
+
+def test_an_internal_deployment_leaks_no_public_grant_through_outputs_or_other_resource_types():
+    assert T["Outputs"]["FunctionUrl"]["Condition"] == "IsPublicEdge"
+    for name, out in T["Outputs"].items():
+        if "Url" in name or "Url" in json.dumps(out.get("Value", "")):
+            assert out.get("Condition") == "IsPublicEdge", name
+    # the only ways a Lambda becomes publicly callable: a URL, a permission, or a gateway in front of it
+    types = {v["Type"] for v in R.values()}
+    assert not {t for t in types if t.startswith(("AWS::ApiGateway", "AWS::CloudFront", "AWS::ElasticLoadBalancingV2"))}
+    unconditional = [k for k, v in R.items() if v["Type"] in ("AWS::Lambda::Url", "AWS::Lambda::Permission") and not v.get("Condition")]
+    assert unconditional == []
+    # every permission that exists with the edge off names one role by reference, never a wildcard (FLY-TSK-028-0D)
+    for name, v in R.items():
+        if v["Type"] == "AWS::Lambda::Permission" and name != "FunctionUrlPublicInvoke":
+            assert v["Properties"]["Principal"] != "*" and "Ref" in v["Properties"]["Principal"], name
+
+
+def test_the_public_grant_detector_catches_an_unguarded_grant():
+    """Negative control: strip the condition from the real template's grants and the detector must see them."""
+    stripped = json.loads(json.dumps(R))
+    for k in ("FunctionUrl", "FunctionUrlPublicInvoke"):
+        del stripped[k]["Condition"]
+    assert sorted(_public_grants(stripped, "false")) == ["FunctionUrl", "FunctionUrlPublicInvoke"]
+    star = json.loads(json.dumps(R))
+    star["Sneaky"] = {"Type": "AWS::Lambda::Permission", "Properties": {"Action": "lambda:InvokeFunction", "Principal": "*"}}
+    assert _public_grants(star, "false") == ["Sneaky"]

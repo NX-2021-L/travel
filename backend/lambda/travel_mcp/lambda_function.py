@@ -947,7 +947,11 @@ _DRY_RUN_TOOLS: tuple = WRITE_TOOLS  # tools with server-side dry_run (DVP-TSK-9
 
 
 def build_caps() -> Dict[str, Any]:
-    """The capabilities document for this deployment's surface: parity caps.schema 1.1.0 (orchestrator ruling E2-R11)."""
+    """The BUILD's capabilities document: the tool list and schemas, parity caps.schema 1.1.0 (ruling E2-R11).
+
+    FLY-TSK-031-0A (A-14): a function of the code alone. It reads no setting, so every deployment of one build
+    holds the same bytes (the committed caps.json IS this, rendered by scripts/emit_caps.py). What a deployment
+    adds when it serves it (its surface, a timestamp) is served_caps()."""
     actions = []
     for t in _tool_specs():
         actions.append({
@@ -960,13 +964,19 @@ def build_caps() -> Dict[str, Any]:
             "via": "top-level",
             "dryRun": t.name in _DRY_RUN_TOOLS,
         })
-    return {"schemaVersion": "1.1.0", "surface": SURFACE_NAME, "generatedAt": _now_iso(), "actions": actions}
+    return {"schemaVersion": "1.1.0", "actions": actions}
+
+
+def served_caps() -> Dict[str, Any]:
+    """What /caps.json answers: the build's document unchanged, plus this deployment's surface and a timestamp."""
+    return {**build_caps(), "surface": SURFACE_NAME, "generatedAt": _now_iso()}
 
 
 def build_permission_manifest() -> Dict[str, Any]:
+    """The BUILD's permission manifest: settings-free, like build_caps (A-14). Names the settings that
+    supply the allow-list and the write groups; never their values."""
     return {
         "v": 1,
-        "surface": SURFACE_NAME,
         "principals": {
             "internal-key": {"access": "all"},
             "cognito": {
@@ -974,11 +984,17 @@ def build_permission_manifest() -> Dict[str, Any]:
                 "allow_list_env": "COGNITO_ALLOWED_SUBS",
                 "applies_to": ["read", "write"],
                 "write_groups_env": "TRAVEL_WRITE_GROUPS",
-                "write_groups": list(TRAVEL_WRITE_GROUPS),
             },
         },
         "tools": {name: dict(rule) for name, rule in POLICY_TABLE.items()},
     }
+
+
+def served_permission_manifest() -> Dict[str, Any]:
+    """What /permission-manifest.json answers: the build's manifest plus this deployment's surface and write groups."""
+    doc = build_permission_manifest()
+    doc["principals"]["cognito"]["write_groups"] = list(TRAVEL_WRITE_GROUPS)
+    return {**doc, "surface": SURFACE_NAME}
 
 
 def _authorize(principal: Optional[Dict[str, Any]], tool: str) -> Optional[str]:
@@ -1104,9 +1120,9 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     _hdrs = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     _IDEMPOTENCY_KEY.set(_hdrs.get("idempotency-key", ""))
     if path == "/caps.json" and method == "GET":
-        return _json_response(build_caps())
+        return _json_response(served_caps())
     if path == "/permission-manifest.json" and method == "GET":
-        return _json_response(build_permission_manifest())
+        return _json_response(served_permission_manifest())
 
     # Build ASGI scope
     raw_headers = event.get("headers") or {}

@@ -19,7 +19,8 @@ SETTINGS = {
     "TABLE_NAME": {"required": True, "purpose": "the flights table"},
     "RECORDS_TABLE_NAME": {"required": True, "purpose": "the records table (hash pk, range sk, GSI area-index)"},
     "SURFACE_NAME": {"required": True, "purpose": "the surface and connector name this deployment serves"},
-    "FINANCE_READ_FUNCTION": {"required": True, "purpose": "the finance function invoked directly for the residence read"},
+    "FINANCE_READ_FUNCTION": {"required": True, "purpose": "finance's HTTPS Function URL, called over HTTPS for the residence read; finance refuses a direct Lambda invoke (finding DOC-4CEAAE4B8CB7)"},
+    "FINANCE_READ_CREDENTIAL": {"required": False, "purpose": "the bearer credential for that Function URL call; never committed, provisioned on the function by its owner; absent, a home read refuses HOME_UNAVAILABLE (cause config)"},
     "COGNITO_USER_POOL_ID": {"required": True, "purpose": "sign-in pool"},
     "COGNITO_CLIENT_ID": {"required": True, "purpose": "sign-in client"},
     "COGNITO_REGION": {"required": True, "purpose": "sign-in pool region"},
@@ -123,6 +124,8 @@ def record_keys(kind, values):
 
 
 # --------------------------------------------------------------------------- vocabularies (BRD 6.5, 6.6)
+# The name is BASES (a boundary's basis is one of these); there is no `BASIS`. Chosen over adding an alias: every
+# shipped module and test already says BASES, and one name is one vocabulary.
 BASES = ("recorded", "derived", "undecided")
 # Rules by name. derives_boundary: may be the rule behind a `derived` first/last boundary (get_trip names it).
 RULES = {
@@ -131,15 +134,27 @@ RULES = {
     "no_flight_needed": {"derives_boundary": False, "text": "a stay or a drive away from home is a trip with no flight"},
     "from_lodging": {"derives_boundary": True, "text": "no recorded way back ends on the last check-out; no recorded way out begins on the first check-in"},
     "forced": {"derives_boundary": True, "text": "when the records leave one possible date for a boundary, it is taken"},
-    "bounded": {"derives_boundary": True, "text": "an end that cannot be derived is back by the next departure from home"},
+    # `bounded` is the rule behind an UNDECIDED boundary that still shows a bound (BRD 5.3); it never makes a
+    # `derived` one. The engine emits basis `undecided` with rule `bounded`: the contract now says so.
+    "bounded": {"derives_boundary": False, "text": "an end that cannot be derived is back by the next departure from home"},
     "connection_or_visit": {"derives_boundary": False, "text": "a place left the day it was reached is a connection"},
     "a_move": {"derives_boundary": True, "text": "arriving at a new residence on or after its first night is arriving home"},
 }
+# Why a record sits in no trip. One disposition per excluded record (trip_engine `excluded` entries).
+DISPOSITIONS = ("cancelled", "left_out", "unreadable", "at_home", "a_move", "day_out_and_back")
 FLAGS = ("start not recorded", "return not recorded", "return not planned yet",
          "home not recorded for these dates", "is this place home")
 SIGNALS = ("likely duplicate", "unusually long")
 TRIP_STATES = ("planned", "upcoming", "under way", "past")
-TRIP_LIST_ORDER = ("under way", "upcoming", "past")  # past newest first
+# upcoming = starts after today with a KNOWN return; planned = starts after today with the return still undecided
+# (trip_engine.trip_state, lane 3A). Both are states; `planned` sorts between upcoming and past.
+TRIP_STATE_MEANING = {
+    "under way": "has begun and has not ended",
+    "upcoming": "has not begun; the return is known",
+    "planned": "has not begun; the return is undecided",
+    "past": "has ended",
+}
+TRIP_LIST_ORDER = ("under way", "upcoming", "planned", "past")  # past newest first
 TRIP_FIELDS = ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited", "legs",
                "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections"]
 GET_TRIP_EXTRA_FIELDS = ["first_rule", "last_rule"]  # the rule behind each derived boundary

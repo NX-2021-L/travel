@@ -12,9 +12,9 @@ EXCLUDED, deliberately, and why:
   README.md, infra/**, seed/glue/dedup/extract scripts
                                  not code the function runs, not the deploy path; owned by other lanes
                                  or tracked by the finding for later lanes (1C, 3C, 5A)
-  caps.json / permission_manifest.json: scanned, but the surface name `io-travel` is ALLOWED in these two
-                                 generated snapshots only (they are emitted for one surface; see
-                                 scripts/emit_caps.py). Every other forbidden literal is forbidden there.
+  caps.json / permission_manifest.json: scanned with NO allowance. FLY-TSK-031-0A (A-14): they are generated
+                                 settings-free (the surface arrives at serve time), so the committed bytes
+                                 name no deployment and are the same for every one.
 """
 from pathlib import Path
 
@@ -43,22 +43,11 @@ SCANNED = (
                                       "load_deployment_settings.py", "mcp_post_deploy_probe.sh")]
 )
 
-# (file name, literal) pairs allowed; see the module docstring.
-ALLOWED = {("caps.json", "io-travel"), ("permission_manifest.json", "io-travel")}
-
-# KNOWN DEBT, owned by the lanes that landed these modules before this guard existed (FLY-TSK-028-0B may
-# not edit lane_*.py or home_service.py). Each is a fallback to an io value that a deployment cannot
-# override: home_service names the surface in a header (it must read SURFACE_NAME); the lane modules
-# default a region (unreachable on Lambda, where AWS_REGION is always set, and settings.load() refuses
-# to start without it, but still a literal). The list may only SHRINK: an entry whose literal is gone
-# fails test_known_debt_is_not_stale, and a new offender fails test_every_python_module_the_function_ships.
-KNOWN_DEBT = {
-    ("home_service.py", "io-travel"): "FLY-TSK-029-0C: SESSION_NAME must be SURFACE_NAME",
-    ("lane_2a_records.py", "us-west-2"): "FLY-TSK-029-0A: region fallback",
-    ("lane_2b_home.py", "us-west-2"): "FLY-TSK-029-0B: region fallback",
-    ("lane_2e_corrections.py", "us-west-2"): "FLY-TSK-029-0E: region fallback",
-}
-ALLOWED |= set(KNOWN_DEBT)
+# (file name, literal) pairs allowed; see the module docstring. FLY-TSK-031-0A settled every entry that stood
+# here (the surface in the two snapshots, home_service's session name, three region fallbacks): the list is
+# EMPTY and a new entry needs a decision, not a drive-by. It may only shrink.
+KNOWN_DEBT = {}
+ALLOWED = set(KNOWN_DEBT)
 
 
 def _hits(path: Path, text: str):
@@ -100,5 +89,5 @@ def test_known_debt_is_not_stale():
 
 def test_the_guard_actually_detects_a_literal():
     assert ("io-travel-flights", 1) in list(_hits(Path("x.py"), 'T = "io-travel-flights"\n'))
-    assert not list(_hits(Path("caps.json"), '{"surface": "io-travel"}'))
+    assert list(_hits(Path("caps.json"), '{"surface": "io-travel"}'))  # no file may name the surface any more
     assert list(_hits(Path("caps.json"), '{"table": "io-travel-flights"}'))

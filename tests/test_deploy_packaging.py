@@ -65,15 +65,23 @@ def test_verify_step_runs_package_check_after_apply():
     assert wf.index("id: apply") < wf.index("verify_deployed_package.py") < wf.index("id: undo")
 
 
-def _zip(path, names, contract=None):
+def _zip(path, names, contract=None, overrides=None):
+    """A package of `names`: each is the repo's own bytes (modules and snapshots), `contract`/`overrides` replace some."""
+    overrides = dict(overrides or {})
+    if contract:
+        overrides["contract.py"] = contract
     with zipfile.ZipFile(path, "w") as z:
         for n in names:
-            z.writestr(n, contract if (n == "contract.py" and contract) else "X = 1\n")
+            real = LAMBDA / n
+            z.writestr(n, overrides.get(n, real.read_text() if real.is_file() else "X = 1\n"))
     return path
 
 
+SNAPSHOT_FILES = set(vdp.SNAPSHOTS)
+
+
 def test_check_passes_on_full_package(tmp_path):
-    z = _zip(tmp_path / "a.zip", EXPECTED | {"pkg/x.py"}, (LAMBDA / "contract.py").read_text())
+    z = _zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES | {"pkg/x.py"})
     errors, _ = vdp.check(z)
     assert errors == []
 
@@ -84,11 +92,54 @@ def test_check_fails_when_contract_dropped(tmp_path):
 
 
 def test_check_fails_on_stale_contract(tmp_path):
-    errors, _ = vdp.check(_zip(tmp_path / "a.zip", EXPECTED, 'TOOL_NAMES = ("a", "b")\n'))
+    errors, _ = vdp.check(_zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES, 'TOOL_NAMES = ("a", "b")\n'))
     assert any("declares 2 tools" in e for e in errors)
 
 
 def test_check_expected_list_override_fails(tmp_path):
-    z = _zip(tmp_path / "a.zip", EXPECTED, (LAMBDA / "contract.py").read_text())
+    z = _zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES)
     errors, _ = vdp.check(z, extra="lane_drill.py")
     assert any("lane_drill.py" in e for e in errors)
+
+
+# ---- FLY-TSK-031-0A, A-14 clause 1: the deployed artifact equals the build byte for byte ----
+def test_packaging_block_ships_the_snapshots(tmp_path):
+    """deploy.sh puts caps.json and permission_manifest.json in the package (they are what is compared)."""
+    assert "for snapshot in caps.json permission_manifest.json" in DEPLOY
+    assert tuple(re.search(r"for snapshot in (.*?); do", DEPLOY).group(1).split()) == vdp.SNAPSHOTS
+
+
+def test_check_fails_when_a_snapshot_is_not_shipped(tmp_path):
+    errors, _ = vdp.check(_zip(tmp_path / "a.zip", EXPECTED))
+    assert any("caps.json (not shipped)" in e for e in errors)
+
+
+def test_check_fails_when_the_shipped_tool_list_differs_by_one_byte(tmp_path):
+    caps = (LAMBDA / "caps.json").read_text()
+    errors, _ = vdp.check(_zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES, overrides={"caps.json": caps + " "}))
+    assert any("differ" in e and "caps.json" in e for e in errors)
+
+
+def test_check_fails_when_a_module_differs_by_one_byte(tmp_path):
+    src = (LAMBDA / "lane_3a_trips.py").read_text()
+    errors, _ = vdp.check(_zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES, overrides={"lane_3a_trips.py": src + "\n#\n"}))
+    assert any("lane_3a_trips.py" in e for e in errors)
+
+
+def test_deployed_code_renders_the_build_snapshots(tmp_path):
+    """Execute a package made of the repo's own modules: its build_caps/build_permission_manifest render the
+    committed bytes. Needs the lambda's dependencies (CI with the private package); skipped where absent."""
+    import pytest
+    pytest.importorskip("io_kit_mcp_edge")
+    z = _zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES)
+    assert vdp.generated_differences(z) == []
+
+
+def test_deployed_code_that_builds_a_different_tool_list_is_refused(tmp_path):
+    import pytest
+    pytest.importorskip("io_kit_mcp_edge")
+    src = (LAMBDA / "contract.py").read_text()
+    changed = src.replace('"The id of the trip\'s first record"', '"The trip key"')
+    assert changed != src
+    z = _zip(tmp_path / "a.zip", EXPECTED | SNAPSHOT_FILES, overrides={"contract.py": changed})
+    assert any("caps.json" in e for e in vdp.generated_differences(z))

@@ -39,6 +39,15 @@ def missing_runtime(environ=None) -> list:
     return [k for k in RUNTIME_SETTINGS if _blank(env.get(k) or env.get("AWS_DEFAULT_REGION"))]
 
 
+def region(environ=None) -> str:
+    """The deployment's AWS region, from the runtime. No default exists: absent raises SettingsError (A-14)."""
+    env = _env(environ)
+    value = (env.get("AWS_REGION") or env.get("AWS_DEFAULT_REGION") or "").strip()
+    if not value:
+        raise SettingsError(failure_message(list(RUNTIME_SETTINGS)))
+    return value
+
+
 def failure_message(missing: list) -> str:
     return "refusing to start: required settings absent: " + ", ".join(sorted(missing))
 
@@ -50,5 +59,5 @@ def load(environ=None) -> dict:
     if missing:
         raise SettingsError(failure_message(missing))
     out = {k: (env.get(k) or "").strip() for k in contract.SETTINGS}
-    out["AWS_REGION"] = (env.get("AWS_REGION") or env.get("AWS_DEFAULT_REGION")).strip()
+    out["AWS_REGION"] = region(env)
     return out
