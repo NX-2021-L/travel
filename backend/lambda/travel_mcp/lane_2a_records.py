@@ -221,8 +221,8 @@ def _stamp_new(kind, item, keyvals, args):
     out.update(contract.record_keys(kind, keyvals))
     out.update({"kind": kind, "status": "active", "date_iso": item[spec["date_iso"]], "created_at": now, "updated_at": now,
                 "author": str((lf._PRINCIPAL.get() or {}).get("id") or "unknown")})
-    if args.get("session"):
-        out["session"] = str(args["session"])
+    if lf.stamp_session(args):
+        out["session"] = lf.stamp_session(args)
     if out.get(spec["index_area_id"]):
         out["area_id"] = out[spec["index_area_id"]]  # the area-index GSI key
     return out

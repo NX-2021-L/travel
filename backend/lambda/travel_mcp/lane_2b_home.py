@@ -148,6 +148,15 @@ def _dec(v):
 
 
 # ------------------------------------------------------------------ handlers
+def _session(args):
+    """The session stamp: the tool argument wins, else the internal door's event session (lambda_function.stamp_session)."""
+    try:
+        import lambda_function as lf
+        return lf.stamp_session(args)
+    except Exception:
+        return str(args.get("session") or "")
+
+
 def _author():
     try:
         import lambda_function as lf
@@ -182,8 +191,8 @@ async def set_home_places(args):
         item = {**keys, "kind": KIND, "residence_uid": uid, "places": _dec(clean), "status": "active",
                 "source": args.get("source") or "set_home_places", "author": _author(),
                 "created_at": (prior or {}).get("created_at", now), "updated_at": now}
-        if args.get("session"):
-            item["session"] = str(args["session"])
+        if _session(args):
+            item["session"] = _session(args)
         if vf:
             item["valid_from"] = item["date_iso"] = vf
         if vt:

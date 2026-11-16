@@ -208,6 +208,13 @@ class _RequestHolder:
 
 _PRINCIPAL = _RequestHolder(None)
 _IDEMPOTENCY_KEY = _RequestHolder("")
+_ACTING_SESSION = _RequestHolder("")  # internal door only: the event's session (FLY-TSK-032-0B); "" elsewhere
+
+
+def stamp_session(args: Dict[str, Any]) -> str:
+    """The session for an author stamp: the tool argument wins; else the internal door's event session; else "".
+    The one seam every stamping path uses (lane 2A creates, lane 2B set_home_places, lane 2E corrections)."""
+    return str(args.get("session") or _ACTING_SESSION.get() or "")
 
 
 def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
@@ -1006,6 +1013,14 @@ def _authorize(principal: Optional[Dict[str, Any]], tool: str) -> Optional[str]:
         return None
     if not principal.get("allowed"):
         return "principal is not in the COGNITO_ALLOWED_SUBS allow-list"
+    if principal.get("kind") == "internal-role":
+        # INF GUARD (FLY-TSK-032-0B, A-30; rests on ND-27 of DOC-737372B246E9, which io has not accepted). Behind the
+        # internal door a write needs an acting person and NO group; only its presence is tested, never its value.
+        # To drop the rule if io rules otherwise: delete the two lines of the `if rule[...]` test below (the `return None`
+        # that follows stays, so TRAVEL_WRITE_GROUPS still never applies here).
+        if rule["access"] == "write" and not principal.get("acting_principal"):
+            return f"{tool} behind the internal door needs an acting_principal on the event"
+        return None  # TRAVEL_WRITE_GROUPS applies to signed-in principals only (A-31)
     if rule["access"] == "write" and TRAVEL_WRITE_GROUPS and not (
         set(principal.get("groups") or []) & set(TRAVEL_WRITE_GROUPS)
     ):
@@ -1031,6 +1046,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "idempotency_key": _IDEMPOTENCY_KEY.get() or None,
         "allowed": denied is None, "ts": _now_iso(),
     }
+    if (principal or {}).get("kind") == "internal-role":  # who acted, for the tools that store no person (A-31)
+        audit.update({"invoker_role": principal.get("role"), "acting_principal": principal.get("acting_principal") or None,
+                      "session": _ACTING_SESSION.get() or None})
     logger.info(json.dumps(audit))
     if denied:
         return _error("forbidden", denied, status=403)
@@ -1073,6 +1091,7 @@ async def _handle_lambda_event(event: Dict[str, Any]) -> Dict[str, Any]:
     finally:
         _PRINCIPAL.reset()
         _IDEMPOTENCY_KEY.reset()
+        _ACTING_SESSION.reset()
 
 
 async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -1107,8 +1126,12 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
         "_pool": ctx.get("pool") or "iograph",
     })
     if internal_door:  # admitted by door.admit as the named role; not a Cognito sub
-        principal = {"kind": "internal-role", "id": edge_principal["sub"], "sub": edge_principal["sub"],
-                     "groups": [], "allowed": True, "pool": "internal-door"}
+        # the two keys are read ONLY here, from the block door.direct_to_http built; a public-mode event never gets here
+        person = edge_principal.get("acting_principal") or ""
+        principal = {"kind": "internal-role", "id": person or edge_principal["sub"], "role": edge_principal["sub"],
+                     "sub": edge_principal["sub"], "acting_principal": person, "groups": [], "allowed": True,
+                     "pool": "internal-door"}
+        _ACTING_SESSION.set(edge_principal.get("session") or "")
     if not principal.get("allowed"):
         return {
             "statusCode": 403,
@@ -1205,7 +1228,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if shape == "health":  # LD-39: one read-only liveness answer; touches no tool, table or network
         return _door.health(event, SURFACE_NAME)
     if shape == "direct":  # internal door: the named role, straight to the tools (no bearer; IAM is the gate)
-        return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE), context)
+        return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE, INTERNAL_DEPLOY_ROLE), context)
     door = _enceladus_door(event)
     if door is not None:  # Enceladus-pool internal door: validated by validate_bearer, then straight to the tools
         event.setdefault("io_kit_mcp", {}).update(

@@ -20,10 +20,16 @@ Health read (FLY-TSK-028-0D, BRD LD-39): the JSON-RPC method "ping" is answered 
 reaches a tool, a table or the network: read-only, no person's data. The role named by INTERNAL_DEPLOY_ROLE
 (optional) is answered that read and nothing else; INTERNAL_INVOKER_ROLE gets the tools as well.
 
-Direct event shape: {"invoker_role": "<role arn>", "mcp": {<one JSON-RPC request>}}.
+Direct event shape: {"invoker_role": "<role arn>", "mcp": {<one JSON-RPC request>},
+                     "acting_principal": "<id>", "session": "<id>"}   (FLY-TSK-032-0B, A2 of DOC-14994CDDA217)
+`acting_principal` and `session` are optional. Each is a string matching ID_PATTERN; a principal that equals a role named in
+settings is absent, and any other value counts as absent too (never an error). The acting person is an UNVERIFIED LABEL for
+the author stamp: admission (admit) never reads it, and the only test applied to it anywhere is that it is present. They are
+read here, only at the top level of an admitted direct event, and nowhere on the public edge.
 """
 import json
 import os
+import re
 
 import settings
 
@@ -83,7 +89,8 @@ def admit(event, mode, role, deploy=""):
     if http:
         raise HttpEventRefused("internal door refuses an HTTP-shaped event")
     claimed, mcp = event.get("invoker_role"), event.get("mcp")
-    if not isinstance(mcp, dict) or not claimed or claimed not in {r for r in (role, deploy) if r}:
+    if (not isinstance(mcp, dict) or not isinstance(claimed, str) or not claimed
+            or claimed not in {r for r in (role, deploy) if r}):  # a non-string claim is refused, never raised on
         raise InvokerRefused("internal door answers only a direct event from a named role")
     if mcp.get("method") == HEALTH_METHOD:
         return "health"
@@ -104,13 +111,33 @@ def refusal(exc) -> dict:
             "body": json.dumps({"error": "refused", "reason": type(exc).__name__}), "isBase64Encoded": False}
 
 
-def direct_to_http(event, role) -> dict:
-    """Wrap an admitted direct event as the request the tool handler already serves, carrying the role as principal."""
+ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+def _opaque_id(value, roles=()) -> str:
+    """The value when it is a string matching ID_PATTERN and not a named role; otherwise "" (absent, not an error)."""
+    if not isinstance(value, str) or ID_PATTERN.fullmatch(value) is None or value in roles:
+        return ""
+    return value
+
+
+def acting(event, role, deploy="") -> tuple:
+    """(acting_principal, session) from the top level of an ADMITTED direct event; "" for each that is absent or invalid.
+    Called only for the internal door's "direct" shape. Never consulted by admit()."""
+    roles = {r for r in (role, deploy) if r}
+    return _opaque_id(event.get("acting_principal"), roles), _opaque_id(event.get("session"))
+
+
+def direct_to_http(event, role, deploy="") -> dict:
+    """Wrap an admitted direct event as the request the tool handler already serves, carrying the role as principal
+    and, as unverified labels, the acting person and the session (empty strings when absent)."""
+    person, session = acting(event, role, deploy)
     return {
         "requestContext": {"http": {"method": "POST", "path": "/mcp"}},
         "rawPath": "/mcp",
         "headers": {"content-type": "application/json", "accept": "application/json, text/event-stream"},
         "body": json.dumps(event["mcp"]),
         "isBase64Encoded": False,
-        "io_kit_mcp": {"principal": {"sub": role, "groups": []}, "pool": "internal-door"},
+        "io_kit_mcp": {"principal": {"sub": role, "groups": [], "acting_principal": person, "session": session},
+                        "pool": "internal-door"},
     }
