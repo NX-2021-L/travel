@@ -29,6 +29,7 @@ SENTINEL = "zz-sentinel-value-zz"
 def full_env(**over):
     env = {k: f"{SENTINEL}-{k.lower()}" for k in contract.SETTINGS}
     env["AWS_REGION"] = "r-1"
+    env["DOOR_MODE"] = "public"  # FLY-TSK-028-0D: the door is a setting too (door.py)
     env.update(over)
     return env
 
@@ -162,7 +163,7 @@ def test_allowed_subs_guard_is_preserved():
 
 
 def test_a_setting_absent_from_live_and_supplied_is_caught_by_resolve_then_guard():
-    live = {k: "v" for k in contract.SETTINGS if k != REQUIRED[0]}
+    live = {**{k: "v" for k in contract.SETTINGS if k != REQUIRED[0]}, "DOOR_MODE": "public"}
     assert REQUIRED[0] in resolve_env.guard(resolve_env.resolve(live, {}))
     assert resolve_env.guard(resolve_env.resolve(live, {REQUIRED[0]: "supplied"})) == ""
 

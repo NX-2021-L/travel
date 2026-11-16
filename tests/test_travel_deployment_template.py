@@ -118,3 +118,35 @@ def test_no_generated_or_timestamped_properties():
                     "AWS::IAM::Role": "RoleName"}.get(v["Type"])
         if name_key:
             assert name_key in props, f"{k} must have an explicit, parameterised name"
+
+
+
+# ---- FLY-TSK-028-0D, A-4 clause 3: no template gives an internal function a public grant ----
+def _created(resource, public_edge):
+    """Would CloudFormation create `resource` for this PublicEdge value? Evaluates the condition."""
+    cond = R[resource].get("Condition")
+    assert cond, resource + " must be conditional"
+    assert T["Conditions"][cond] == {"Fn::Equals": [{"Ref": "PublicEdge"}, "true"]}
+    return public_edge == "true"
+
+
+def test_internal_deployment_creates_no_function_url_and_no_public_invoke():
+    assert T["Parameters"]["PublicEdge"]["Default"] == "false"
+    for res in ("FunctionUrl", "FunctionUrlPublicInvoke"):
+        assert _created(res, "false") is False  # PublicEdge=false: neither resource is created
+        assert _created(res, "true") is True
+
+
+def test_every_public_grant_in_the_template_is_behind_the_public_edge_condition():
+    for name, res in R.items():
+        p = res.get("Properties", {})
+        public = res["Type"] == "AWS::Lambda::Url" or (
+            res["Type"] == "AWS::Lambda::Permission" and (p.get("Principal") == "*" or "FunctionUrlAuthType" in p))
+        if public:
+            assert res.get("Condition") == "IsPublicEdge", name
+
+
+def test_function_mode_follows_the_edge_parameter():
+    v = R["McpFunction"]["Properties"]["Environment"]["Variables"]
+    assert v["DOOR_MODE"] == {"Fn::If": ["IsPublicEdge", "public", "internal"]}
+    assert "INTERNAL_INVOKER_ROLE" in v

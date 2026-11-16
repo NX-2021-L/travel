@@ -17,6 +17,7 @@ _TEST_DEPLOYMENT = {
     "COGNITO_REGION": "us-east-1",
     "COGNITO_ALLOWED_SUBS": "owner-sub",
     "CORS_ORIGINS": "https://think.thepup.io",
+    "DOOR_MODE": "public",
     "AWS_REGION": "us-west-2",
 }
 for _k, _v in _TEST_DEPLOYMENT.items():

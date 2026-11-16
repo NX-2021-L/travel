@@ -13,6 +13,7 @@ import os
 import sys
 
 import contract
+import door
 import settings
 
 # Every setting a deployment supplies is declared by the contract; nothing here names a deployment.
@@ -32,7 +33,7 @@ DROPPED = ("COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_AP
 def resolve(current: dict, supplied: dict) -> dict:
     env = dict(current or {})
     env["MCP_TRANSPORT"] = "streamable_http"
-    for k in KEYS:
+    for k in KEYS + list(door.DOOR_KEYS):
         if supplied.get(k):
             env[k] = supplied[k]
     return {k: v for k, v in env.items() if v and k not in DROPPED}
@@ -49,6 +50,10 @@ def guard(env: dict) -> str:
     missing = settings.missing_required(env)
     if missing:
         return "refusing to deploy: required settings absent: " + ", ".join(sorted(missing))
+    try:
+        door.load(env)
+    except door.DoorError as exc:
+        return "refusing to deploy: " + str(exc).replace("refusing to start: ", "")
     return ""
 
 
