@@ -115,13 +115,32 @@ def test_credential_is_never_in_errors_or_reprs():
         assert SECRET not in str(e) and SECRET not in repr(e) and SECRET not in e.cause
 
 
-def test_no_credential_setting_declared_so_default_refuses_and_reads_no_env(monkeypatch):
-    assert not [k for k in c.SETTINGS if "FINANCE" in k and k != "FINANCE_READ_FUNCTION"]
+def test_credential_setting_is_declared_and_absent_refuses(monkeypatch):
+    """FLY-TSK-031-0A: the credential is a declared (optional, never committed) setting; absent, the read refuses."""
+    assert c.SETTINGS["FINANCE_READ_CREDENTIAL"]["required"] is False
+    assert hs.CREDENTIAL_SETTING == "FINANCE_READ_CREDENTIAL"
     monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
+    monkeypatch.delenv("FINANCE_READ_CREDENTIAL", raising=False)
     s = ok()
     with pytest.raises(hs.HomeError) as e:
         hs.read_home("2021-02-01", "2021-03-01", transport=s)
     assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
+    assert "FINANCE_READ_CREDENTIAL" in str(e.value) and SECRET not in str(e.value)
+
+
+def test_default_credential_and_session_come_from_settings(monkeypatch):
+    """With the setting present a live read can succeed; the session header is the deployment's SURFACE_NAME."""
+    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)
+    monkeypatch.setenv("SURFACE_NAME", "some-other-surface")
+    s = ok()
+    hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    headers = s.calls[0][1]
+    assert headers["Authorization"] == f"Bearer {SECRET}" and headers["X-Agent-Session"] == "some-other-surface"
+    monkeypatch.delenv("SURFACE_NAME")
+    with pytest.raises(hs.HomeError) as e:
+        hs.read_home("2021-02-01", "2021-03-01", transport=ok())
+    assert e.value.cause == "config" and "SURFACE_NAME" in str(e.value)
 
 
 def test_endpoint_defaults_to_declared_setting(monkeypatch):

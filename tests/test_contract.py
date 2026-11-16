@@ -126,11 +126,15 @@ def test_vocabularies():
     assert c.BASES == ("recorded", "derived", "undecided")
     assert set(c.RULES) == {"home_to_home", "one_line", "no_flight_needed", "from_lodging", "forced", "bounded",
                             "connection_or_visit", "a_move"}
-    assert {r for r, v in c.RULES.items() if v["derives_boundary"]} == {"from_lodging", "forced", "bounded", "a_move"}
+    assert {r for r, v in c.RULES.items() if v["derives_boundary"]} == {"from_lodging", "forced", "a_move"}  # `bounded` backs an undecided boundary, never a derived one (FLY-TSK-031-0A)
     assert c.FLAGS == ("start not recorded", "return not recorded", "return not planned yet",
                        "home not recorded for these dates", "is this place home")
     assert c.SIGNALS == ("likely duplicate", "unusually long")
     assert c.TRIP_STATES == ("planned", "upcoming", "under way", "past")
+    assert c.TRIP_LIST_ORDER == ("under way", "upcoming", "planned", "past") and set(c.TRIP_LIST_ORDER) == set(c.TRIP_STATES)
+    assert set(c.TRIP_STATE_MEANING) == set(c.TRIP_STATES)
+    assert c.DISPOSITIONS == ("cancelled", "left_out", "unreadable", "at_home", "a_move", "day_out_and_back")
+    assert not hasattr(c, "BASIS")  # the name is BASES
     assert c.TRIP_FIELDS == ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited",
                              "legs", "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections"]
     assert c.GET_TRIP_EXTRA_FIELDS == ["first_rule", "last_rule"]
@@ -153,7 +157,7 @@ def test_error_codes():
 def test_settings_keys_and_no_instance_values():
     assert set(c.SETTINGS) == {
         "TABLE_NAME", "RECORDS_TABLE_NAME", "SURFACE_NAME", "FINANCE_READ_FUNCTION", "COGNITO_USER_POOL_ID",
-        "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "IOGRAPH_ALLOWED_SUBS",
+        "FINANCE_READ_CREDENTIAL", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "IOGRAPH_ALLOWED_SUBS",
         "TRAVEL_WRITE_GROUPS", "PUBLIC_BASE_URL", "CORS_ORIGINS"}
     assert all(set(v) == {"required", "purpose"} for v in c.SETTINGS.values())
     src = (D / "contract.py").read_text().lower()

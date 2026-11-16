@@ -36,7 +36,9 @@ Determinism: inputs are sorted by explicit keys, sets are never iterated unsorte
 import datetime as _dt
 import math
 
-DISPOSITIONS = ("cancelled", "left_out", "unreadable", "at_home", "a_move", "day_out_and_back")
+import contract
+
+DISPOSITIONS = contract.DISPOSITIONS  # the vocabulary lives in the contract
 KIND_ORDER = {"flight": 0, "drive": 1, "lodging": 2, "car_rental": 3}
 STATE_ORDER = {"under way": 0, "upcoming": 1, "planned": 2, "past": 3}
 _ONE = _dt.timedelta(days=1)

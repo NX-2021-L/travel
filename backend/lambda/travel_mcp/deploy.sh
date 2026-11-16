@@ -58,6 +58,12 @@ for module_path in "${SCRIPT_DIR}"/*.py; do
   SHIPPED_MODULES+=("${module_name}")
 done
 [ "${#SHIPPED_MODULES[@]}" -gt 0 ] || { echo "ABORT: no modules to package"; exit 4; }
+# FLY-TSK-031-0A (A-14): the generated tool list and permission manifest ship with the code, so the deployed
+# artifact carries the build's snapshots and scripts/verify_deployed_package.py can compare them byte for byte.
+for snapshot in caps.json permission_manifest.json; do
+  [ -f "${SCRIPT_DIR}/${snapshot}" ] || { echo "ABORT: ${snapshot} is missing (run scripts/emit_caps.py)"; exit 4; }
+  cp "${SCRIPT_DIR}/${snapshot}" "${BUILD_DIR}/"
+done
 log "Packaged ${#SHIPPED_MODULES[@]} modules: ${SHIPPED_MODULES[*]}"
 # END package-modules
 

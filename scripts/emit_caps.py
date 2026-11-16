@@ -2,7 +2,11 @@
 """Emit or check the committed travel caps/permission snapshots (DVP-TSK-889).
 
   emit_caps.py          rewrite backend/lambda/travel_mcp/{caps,permission_manifest}.json
-  emit_caps.py --check  exit 1 if the committed snapshots drift from the code
+  emit_caps.py --check  exit 1 if the committed snapshots are not byte-for-byte what the code builds
+
+FLY-TSK-031-0A (A-14): the snapshots are settings-free (no surface, no timestamp, no allow-list or
+write-group value), so they are the same bytes for every deployment of one build, and --check
+compares BYTES, not parsed values. The output does not depend on the settings it runs under.
 """
 import json
 import os
@@ -15,20 +19,15 @@ sys.path.insert(0, str(D))
 import contract  # noqa: E402
 
 # lambda_function refuses to import without every required setting (FLY-TSK-028-0B). The snapshots
-# depend on the surface name only, which MUST be supplied; the other required settings do not shape
-# them, so this build-time tool (never the function) stands in a marker for any that are absent.
-if not os.environ.get("SURFACE_NAME"):
-    sys.exit("emit_caps: SURFACE_NAME must be supplied (the snapshots are generated for one surface)")
+# depend on none of them, so this build-time tool (never the function) stands in a marker for any that
+# are absent; tests/test_parity_across_settings.py proves the output is identical under different values.
 for _k, _spec in contract.SETTINGS.items():
     if _spec["required"]:
         os.environ.setdefault(_k, "emit-caps-marker")
+os.environ.setdefault("DOOR_MODE", "public")  # door.load() also refuses an absent mode; the snapshots do not depend on it
 import lambda_function as lf  # noqa: E402
 
 DOCS = {"caps.json": lf.build_caps, "permission_manifest.json": lf.build_permission_manifest}
-
-
-def strip(doc):
-    return {k: v for k, v in doc.items() if k != "generatedAt"}
 
 
 def render(doc):
@@ -43,7 +42,7 @@ def main(argv):
         want = render(doc)
         path = D / name
         if check:
-            if not path.exists() or strip(json.loads(path.read_text())) != strip(json.loads(want)):
+            if not path.exists() or path.read_text() != want:
                 print(f"DRIFT: {name}")
                 bad = 1
         else:

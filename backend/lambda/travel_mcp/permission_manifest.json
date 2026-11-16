@@ -7,14 +7,12 @@
         "write"
       ],
       "default": "deny",
-      "write_groups": [],
       "write_groups_env": "TRAVEL_WRITE_GROUPS"
     },
     "internal-key": {
       "access": "all"
     }
   },
-  "surface": "io-travel",
   "tools": {
     "answer_trip_question": {
       "access": "write"

@@ -23,6 +23,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 import contract
+import settings as _settings
 
 SETTING = "RECORDS_TABLE_NAME"
 KINDS = ("lodging", "car_rental", "drive")
@@ -69,7 +70,11 @@ def _table():
         raise _Refuse("internal_error", f"{SETTING} is not set on this deployment: the records table is not configured "
                       f"(FLY-TSK-041 provides it). Nothing was read or written.")
     if _resource is None:
-        _resource = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2",
+        try:
+            region = _settings.region()
+        except _settings.SettingsError as exc:  # no default region exists (A-14): fail closed
+            raise _Refuse("internal_error", f"{exc}. Nothing was read or written.")
+        _resource = boto3.resource("dynamodb", region_name=region,
                                    config=BotoConfig(retries={"max_attempts": 3, "mode": "adaptive"}))
     return _resource.Table(name), name
 

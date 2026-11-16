@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import contract
+import settings as _settings
 
 KIND = "home_places"
 QUESTION_ID = contract.QUESTIONS["is this place home"]
@@ -80,7 +81,11 @@ def _table():
         raise _TableUnavailable("the RECORDS_TABLE_NAME setting is not set on this deployment, so home places cannot be read or written yet")
     import boto3
     if _resource is None:
-        _resource = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+        try:
+            region = _settings.region()
+        except _settings.SettingsError as exc:  # no default region exists (A-14): fail closed
+            raise _TableUnavailable(f"{exc}, so home places cannot be read or written")
+        _resource = boto3.resource("dynamodb", region_name=region)
     return _resource.Table(name)
 
 

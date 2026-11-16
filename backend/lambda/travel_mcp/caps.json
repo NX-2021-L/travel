@@ -1147,7 +1147,5 @@
       "via": "top-level"
     }
   ],
-  "generatedAt": "2026-11-15T23:50:45Z",
-  "schemaVersion": "1.1.0",
-  "surface": "io-travel"
+  "schemaVersion": "1.1.0"
 }

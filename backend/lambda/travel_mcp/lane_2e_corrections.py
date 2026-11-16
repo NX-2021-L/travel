@@ -29,6 +29,7 @@ from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import BotoCoreError, ClientError
 
 import contract
+import settings as _settings
 
 RECORD_KIND = "correction"
 TABLE_ENV = "RECORDS_TABLE_NAME"
@@ -57,7 +58,10 @@ def _table():
     if not name:
         raise _Fail("missing", f"{TABLE_ENV} is not set on this deployment, so corrections cannot be stored or read; "
                                "the records table is supplied by the deployment (FLY-TSK-041).")
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2"
+    try:
+        region = _settings.region()
+    except _settings.SettingsError as exc:  # no default region exists (A-14): fail closed
+        raise _Fail("missing", f"{exc}. Nothing was read or written.")
     return boto3.resource("dynamodb", region_name=region).Table(name)
 
 

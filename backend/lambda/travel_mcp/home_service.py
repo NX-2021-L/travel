@@ -38,8 +38,9 @@ from typing import Callable, Optional
 import contract
 
 RESIDENCE_TOOL = "finance_residence_periods"  # the ONLY tool this module can send
-SESSION_NAME = "io-travel"
+SESSION_SETTING = "SURFACE_NAME"  # declared in contract.SETTINGS; the X-Agent-Session header names this deployment
 TIMEOUT_SECONDS = 10.0
+CREDENTIAL_SETTING = "FINANCE_READ_CREDENTIAL"  # declared in contract.SETTINGS (optional until provisioned)
 ENDPOINT_SETTING = "FINANCE_READ_FUNCTION"  # declared in contract.SETTINGS; its value must be the Function URL
 END_STATUSES = ("ended", "ongoing", "end_unknown")
 NOT_RECORDED_FLAG = "home not recorded for these dates"
@@ -100,10 +101,20 @@ def _env_endpoint() -> str:
     return os.environ.get(ENDPOINT_SETTING, "").strip()
 
 
-def _missing_credential() -> str:
-    """No setting for finance's credential is declared in contract.SETTINGS, so none is read.
-    Until one is declared, a deployment cannot reach finance and every read is HOME_UNAVAILABLE."""
-    raise HomeError("HOME_UNAVAILABLE", "finance credential is not configured (no setting declared)", cause="config")
+def _env_credential() -> str:
+    """finance's read credential, from the FINANCE_READ_CREDENTIAL setting (contract.SETTINGS). Never committed;
+    provisioned on the function by its owner. Absent: refuse, naming the KEY only."""
+    value = os.environ.get(CREDENTIAL_SETTING, "").strip()
+    if not value:
+        raise HomeError("HOME_UNAVAILABLE", f"{CREDENTIAL_SETTING} is not set on this deployment", cause="config")
+    return value
+
+
+def _session_name() -> str:
+    value = os.environ.get(SESSION_SETTING, "").strip()
+    if not value:
+        raise HomeError("HOME_UNAVAILABLE", f"{SESSION_SETTING} is not set on this deployment", cause="config")
+    return value
 
 
 # --------------------------------------------------------------------------- transport
@@ -244,11 +255,11 @@ def read_home(date_from: str, date_to: str, *, transport: Optional[Callable] = N
     url = endpoint if endpoint is not None else _env_endpoint()
     if not url.startswith("https://"):
         raise HomeError("HOME_UNAVAILABLE", f"{ENDPOINT_SETTING} is not set to finance's https Function URL", cause="config")
-    token = (credential or _missing_credential)()
+    token = (credential or _env_credential)()
     if not token:
         raise HomeError("HOME_UNAVAILABLE", "finance credential is empty", cause="config")
     send = transport or _urllib_transport
-    headers = {"Authorization": f"Bearer {token}", "X-Agent-Session": SESSION_NAME, "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {token}", "X-Agent-Session": _session_name(), "Content-Type": "application/json"}
     body = _request_body(date_from, date_to)
 
     result = None
