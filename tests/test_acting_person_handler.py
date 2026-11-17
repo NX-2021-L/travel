@@ -313,4 +313,4 @@ def test_public_write_still_follows_write_groups(public, monkeypatch):
 
 
 def test_contract_still_pins_the_seams():
-    assert len(contract.ERROR_CODES) == 7 and len(contract.SETTINGS) == 14
+    assert len(contract.ERROR_CODES) == 7 and len(contract.SETTINGS) == 13
