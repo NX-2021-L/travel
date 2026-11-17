@@ -24,6 +24,7 @@ SETTINGS = {
     "SURFACE_NAME": {"required": True, "purpose": "the surface and connector name this deployment serves"},
     "FINANCE_READ_FUNCTION": {"required": "public", "purpose": "finance's HTTPS Function URL, called over HTTPS for the residence read; finance refuses a direct Lambda invoke (finding DOC-4CEAAE4B8CB7)"},
     "FINANCE_READ_CREDENTIAL": {"required": False, "purpose": "the bearer credential for that Function URL call; never committed, provisioned on the function by its owner; absent, a home read refuses HOME_UNAVAILABLE (cause config)"},
+    "FINANCE_READ_CREDENTIAL_SECRET": {"required": False, "purpose": "the name or ARN of the Secrets Manager secret holding the bearer credential for that call; fetched at run time, cached for the life of the execution environment, never logged; when set it is used and FINANCE_READ_CREDENTIAL is ignored; an unreadable secret refuses HOME_UNAVAILABLE (cause config)"},
     "COGNITO_USER_POOL_ID": {"required": "public", "purpose": "sign-in pool"},
     "COGNITO_CLIENT_ID": {"required": "public", "purpose": "sign-in client"},
     "COGNITO_REGION": {"required": "public", "purpose": "sign-in pool region"},

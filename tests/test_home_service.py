@@ -342,3 +342,80 @@ def test_fixture_has_every_state_and_a_gap_and_no_address():
 
 def test_it_stays_out_of_the_lane_registry():
     assert "home_service" not in c.LANE_MODULES.values() and not hasattr(hs, "HANDLERS")
+
+
+# ---------------------------------------------------------------- FLY-TSK-049: credential from Secrets Manager
+class FakeSM:
+    def __init__(self, values=None, exc=None):
+        self.values, self.exc, self.calls = list(values or []), exc, []
+
+    def get_secret_value(self, SecretId):
+        self.calls.append(SecretId)
+        if self.exc:
+            raise self.exc
+        v = self.values.pop(0) if len(self.values) > 1 else self.values[0]
+        return {"SecretString": v} if isinstance(v, str) or v is None else v
+
+
+@pytest.fixture
+def secret_path(monkeypatch):
+    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL_SECRET", "some/secret/name")
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", "literal-must-be-ignored")
+    hs._secret_cache.clear()
+    fake = FakeSM(["secret-one"])
+    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
+    yield fake
+    hs._secret_cache.clear()
+
+
+def test_secret_setting_is_declared_optional():
+    assert c.SETTINGS["FINANCE_READ_CREDENTIAL_SECRET"]["required"] is False
+    assert hs.SECRET_SETTING == "FINANCE_READ_CREDENTIAL_SECRET"
+
+
+def test_secret_wins_over_the_literal_and_is_cached(secret_path):
+    s = ok()
+    hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    assert [x[1]["Authorization"] for x in s.calls] == ["Bearer secret-one"] * 2
+    assert secret_path.calls == ["some/secret/name"]  # fetched once for the life of the environment
+
+
+def test_auth_refusal_refetches_once_then_succeeds(secret_path, monkeypatch):
+    fake = FakeSM(["old-key", "rotated-key"])
+    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
+    good = ok()
+    s = Stub(seq=[(401, b"no"), good(URL, {}, b"{}", 1)[0:2]])
+    r = hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    assert r.periods and len(fake.calls) == 2
+    assert [x[1]["Authorization"] for x in s.calls] == ["Bearer old-key", "Bearer rotated-key"]
+
+
+def test_persistent_auth_refusal_refetches_only_once(secret_path):
+    s = Stub(401, b"no")
+    with pytest.raises(hs.HomeError) as e:
+        hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config"
+    assert len(s.calls) == 2 and len(secret_path.calls) == 2
+
+
+@pytest.mark.parametrize("fake", [FakeSM(exc=RuntimeError("AccessDenied some/secret/name secret-one")),
+                                  FakeSM([None]), FakeSM([""]), FakeSM([{"SecretBinary": b"x"}])])
+def test_unreadable_or_empty_secret_fails_closed_without_leaking(secret_path, monkeypatch, fake):
+    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
+    s = ok()
+    with pytest.raises(hs.HomeError) as e:
+        hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
+    assert "some/secret/name" not in str(e.value) and "secret-one" not in str(e.value) and "literal" not in str(e.value)
+    assert e.value.__cause__ is None
+
+
+def test_without_the_secret_setting_the_literal_still_serves(monkeypatch):
+    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
+    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)
+    s = ok()
+    hs.read_home("2021-02-01", "2021-03-01", transport=s)
+    assert s.calls[0][1]["Authorization"] == f"Bearer {SECRET}"

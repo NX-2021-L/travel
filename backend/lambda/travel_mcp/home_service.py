@@ -41,6 +41,7 @@ RESIDENCE_TOOL = "finance_residence_periods"  # the ONLY tool this module can se
 SESSION_SETTING = "SURFACE_NAME"  # declared in contract.SETTINGS; the X-Agent-Session header names this deployment
 TIMEOUT_SECONDS = 10.0
 CREDENTIAL_SETTING = "FINANCE_READ_CREDENTIAL"  # declared in contract.SETTINGS (optional until provisioned)
+SECRET_SETTING = "FINANCE_READ_CREDENTIAL_SECRET"  # declared in contract.SETTINGS; when set, the credential comes from Secrets Manager
 ENDPOINT_SETTING = "FINANCE_READ_FUNCTION"  # declared in contract.SETTINGS; its value must be the Function URL
 END_STATUSES = ("ended", "ongoing", "end_unknown")
 NOT_RECORDED_FLAG = "home not recorded for these dates"
@@ -101,9 +102,48 @@ def _env_endpoint() -> str:
     return os.environ.get(ENDPOINT_SETTING, "").strip()
 
 
+_secret_cache: dict = {}  # secret id -> value; lives as long as the execution environment, never logged
+_secret_client = None
+
+
+def _secrets_client():
+    global _secret_client
+    if _secret_client is None:
+        import boto3  # lazy: only a deployment that uses the secret path needs it
+        _secret_client = boto3.client("secretsmanager")
+    return _secret_client
+
+
+def _secret_id() -> str:
+    return os.environ.get(SECRET_SETTING, "").strip()
+
+
+def _fetch_secret(secret_id: str, client=None) -> str:
+    """One GetSecretValue. Any failure, an empty or non-string value refuses; the message names the KEY only."""
+    try:
+        resp = (client or _secrets_client()).get_secret_value(SecretId=secret_id)
+        value = resp.get("SecretString")
+    except Exception:  # the exception text can carry the secret's name or an ARN; not kept
+        raise HomeError("HOME_UNAVAILABLE", f"the secret named by {SECRET_SETTING} could not be read", cause="config") from None
+    if not isinstance(value, str) or not value.strip():
+        raise HomeError("HOME_UNAVAILABLE", f"the secret named by {SECRET_SETTING} holds no usable value", cause="config")
+    return value.strip()
+
+
+def _secret_credential(refresh: bool = False) -> str:
+    sid = _secret_id()
+    if refresh:
+        _secret_cache.pop(sid, None)
+    if sid not in _secret_cache:
+        _secret_cache[sid] = _fetch_secret(sid)
+    return _secret_cache[sid]
+
+
 def _env_credential() -> str:
-    """finance's read credential, from the FINANCE_READ_CREDENTIAL setting (contract.SETTINGS). Never committed;
-    provisioned on the function by its owner. Absent: refuse, naming the KEY only."""
+    """finance's read credential. When FINANCE_READ_CREDENTIAL_SECRET is set it comes from Secrets Manager (cached) and the
+    FINANCE_READ_CREDENTIAL literal is ignored; otherwise from the literal. Never committed. Absent: refuse, naming the KEY only."""
+    if _secret_id():
+        return _secret_credential()
     value = os.environ.get(CREDENTIAL_SETTING, "").strip()
     if not value:
         raise HomeError("HOME_UNAVAILABLE", f"{CREDENTIAL_SETTING} is not set on this deployment", cause="config")
@@ -263,7 +303,9 @@ def read_home(date_from: str, date_to: str, *, transport: Optional[Callable] = N
     body = _request_body(date_from, date_to)
 
     result = None
-    for attempt in (1, 2):
+    refetched = False
+    conflict_retried = False
+    for _ in range(3):  # at most: one storage-conflict retry and one credential refetch
         try:
             status, raw = send(url, headers, body, TIMEOUT_SECONDS)
         except Exception:  # transport: DNS, refused, timeout, TLS. The exception text is not kept.
@@ -272,7 +314,12 @@ def read_home(date_from: str, date_to: str, *, transport: Optional[Callable] = N
             result = _unwrap(status, raw)
             break
         except HomeError as e:
-            if e.cause == "storage_conflict" and attempt == 1:
+            if status in (401, 403) and credential is None and _secret_id() and not refetched:
+                refetched = True  # the secret may have been rotated: one fresh read, then one more try
+                headers = {**headers, "Authorization": f"Bearer {_secret_credential(refresh=True)}"}
+                continue
+            if e.cause == "storage_conflict" and not conflict_retried:
+                conflict_retried = True
                 continue  # safe to retry once (row 9)
             raise
 
