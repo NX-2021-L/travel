@@ -23,6 +23,13 @@ URL = "https://finance.example.test/"
 SECRET = "test-bearer-do-not-log"
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_secret_setting(monkeypatch):
+    """A deployment's own FINANCE_READ_CREDENTIAL_SECRET (CI loads deploy/settings.env) must never reach these tests."""
+    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
+    hs._secret_cache.clear()
+
+
 def envelope(inner, is_error=False):
     return json.dumps({"jsonrpc": "2.0", "id": 1,
                        "result": {"content": [{"type": "text", "text": json.dumps(inner)}], "isError": is_error}}).encode()
@@ -116,22 +123,25 @@ def test_credential_is_never_in_errors_or_reprs():
 
 
 def test_credential_setting_is_declared_and_absent_refuses(monkeypatch):
-    """FLY-TSK-031-0A: the credential is a declared (optional, never committed) setting; absent, the read refuses."""
-    assert c.SETTINGS["FINANCE_READ_CREDENTIAL"]["required"] is False
-    assert hs.CREDENTIAL_SETTING == "FINANCE_READ_CREDENTIAL"
+    """FLY-TSK-049: the credential setting names a secret (optional, never a value); unset, the read refuses."""
+    assert c.SETTINGS["FINANCE_READ_CREDENTIAL_SECRET"]["required"] is False
+    assert "FINANCE_READ_CREDENTIAL" not in c.SETTINGS and not hasattr(hs, "CREDENTIAL_SETTING")
     monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.delenv("FINANCE_READ_CREDENTIAL", raising=False)
+    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)  # a stray literal is never used
     s = ok()
     with pytest.raises(hs.HomeError) as e:
         hs.read_home("2021-02-01", "2021-03-01", transport=s)
     assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
-    assert "FINANCE_READ_CREDENTIAL" in str(e.value) and SECRET not in str(e.value)
+    assert "FINANCE_READ_CREDENTIAL_SECRET" in str(e.value) and SECRET not in str(e.value)
 
 
 def test_default_credential_and_session_come_from_settings(monkeypatch):
     """With the setting present a live read can succeed; the session header is the deployment's SURFACE_NAME."""
     monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)
+    monkeypatch.setenv("FINANCE_READ_CREDENTIAL_SECRET", "some/secret/name")
+    hs._secret_cache.clear()
+    monkeypatch.setattr(hs, "_secrets_client", lambda: FakeSM([SECRET]))
     monkeypatch.setenv("SURFACE_NAME", "some-other-surface")
     s = ok()
     hs.read_home("2021-02-01", "2021-03-01", transport=s)
@@ -361,7 +371,6 @@ class FakeSM:
 def secret_path(monkeypatch):
     monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
     monkeypatch.setenv("FINANCE_READ_CREDENTIAL_SECRET", "some/secret/name")
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", "literal-must-be-ignored")
     hs._secret_cache.clear()
     fake = FakeSM(["secret-one"])
     monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
@@ -374,7 +383,7 @@ def test_secret_setting_is_declared_optional():
     assert hs.SECRET_SETTING == "FINANCE_READ_CREDENTIAL_SECRET"
 
 
-def test_secret_wins_over_the_literal_and_is_cached(secret_path):
+def test_secret_is_fetched_once_and_cached(secret_path):
     s = ok()
     hs.read_home("2021-02-01", "2021-03-01", transport=s)
     hs.read_home("2021-02-01", "2021-03-01", transport=s)
@@ -408,14 +417,13 @@ def test_unreadable_or_empty_secret_fails_closed_without_leaking(secret_path, mo
     with pytest.raises(hs.HomeError) as e:
         hs.read_home("2021-02-01", "2021-03-01", transport=s)
     assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
-    assert "some/secret/name" not in str(e.value) and "secret-one" not in str(e.value) and "literal" not in str(e.value)
+    assert "some/secret/name" not in str(e.value) and "secret-one" not in str(e.value)
     assert e.value.__cause__ is None
 
 
-def test_without_the_secret_setting_the_literal_still_serves(monkeypatch):
-    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)
-    s = ok()
-    hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert s.calls[0][1]["Authorization"] == f"Bearer {SECRET}"
+def test_the_deploy_strips_the_retired_literal_from_the_live_environment():
+    """FLY-TSK-049: resolve_env merges the live env, so the retired literal must be dropped explicitly."""
+    import resolve_env
+    live = {"FINANCE_READ_CREDENTIAL": "x", "FINANCE_READ_CREDENTIAL_SECRET": "some/secret/name", "TABLE_NAME": "t"}
+    out = resolve_env.resolve(live, {})
+    assert "FINANCE_READ_CREDENTIAL" not in out and out["FINANCE_READ_CREDENTIAL_SECRET"] == "some/secret/name"

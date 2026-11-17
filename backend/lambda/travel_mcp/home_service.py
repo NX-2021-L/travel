@@ -40,8 +40,7 @@ import contract
 RESIDENCE_TOOL = "finance_residence_periods"  # the ONLY tool this module can send
 SESSION_SETTING = "SURFACE_NAME"  # declared in contract.SETTINGS; the X-Agent-Session header names this deployment
 TIMEOUT_SECONDS = 10.0
-CREDENTIAL_SETTING = "FINANCE_READ_CREDENTIAL"  # declared in contract.SETTINGS (optional until provisioned)
-SECRET_SETTING = "FINANCE_READ_CREDENTIAL_SECRET"  # declared in contract.SETTINGS; when set, the credential comes from Secrets Manager
+SECRET_SETTING = "FINANCE_READ_CREDENTIAL_SECRET"  # declared in contract.SETTINGS; the credential comes from Secrets Manager
 ENDPOINT_SETTING = "FINANCE_READ_FUNCTION"  # declared in contract.SETTINGS; its value must be the Function URL
 END_STATUSES = ("ended", "ongoing", "end_unknown")
 NOT_RECORDED_FLAG = "home not recorded for these dates"
@@ -140,14 +139,11 @@ def _secret_credential(refresh: bool = False) -> str:
 
 
 def _env_credential() -> str:
-    """finance's read credential. When FINANCE_READ_CREDENTIAL_SECRET is set it comes from Secrets Manager (cached) and the
-    FINANCE_READ_CREDENTIAL literal is ignored; otherwise from the literal. Never committed. Absent: refuse, naming the KEY only."""
-    if _secret_id():
-        return _secret_credential()
-    value = os.environ.get(CREDENTIAL_SETTING, "").strip()
-    if not value:
-        raise HomeError("HOME_UNAVAILABLE", f"{CREDENTIAL_SETTING} is not set on this deployment", cause="config")
-    return value
+    """finance's read credential, from the secret named by FINANCE_READ_CREDENTIAL_SECRET (cached). Never committed, never an
+    environment value. Unset or unreadable: refuse, naming the KEY only."""
+    if not _secret_id():
+        raise HomeError("HOME_UNAVAILABLE", f"{SECRET_SETTING} is not set on this deployment", cause="config")
+    return _secret_credential()
 
 
 def _session_name() -> str:

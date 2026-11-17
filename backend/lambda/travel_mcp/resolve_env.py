@@ -26,7 +26,8 @@ DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEAR
 
 # FLY-TSK-022: retired by the edge adoption. Stripped from the function env on every deploy so a
 # stale confidential-client secret or static key can never survive the merge with CURRENT_ENV.
-DROPPED = ("COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_API_KEY",
+DROPPED = ("FINANCE_READ_CREDENTIAL",  # FLY-TSK-049: the literal is retired for the secret; stripped from the live function on deploy
+           "COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_API_KEY",
            "IOGRAPH_POOL_ID", "IOGRAPH_REGION", "IOGRAPH_CLIENT_IDS")
 
 
