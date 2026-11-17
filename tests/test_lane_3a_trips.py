@@ -306,3 +306,39 @@ def test_list_trips_and_get_trip_carry_arc_and_a_confirmation_follows_the_record
     assert leave["success"]
     now = call("list_trips", {})["result"]
     assert [u["correction_id"] for u in now["unapplied_corrections"]] == [cid]
+
+
+# ------------------------------------------------------------------ FLY-TSK-032-0A: correction ids are readable
+def _stay_on(world):
+    flight(world, "f-out", "2026-03-01", "SEA", "JFK")
+    rec(world, "lodging", "h1", first_night="2026-03-01", last_night="2026-03-05", place_id="city:new-york",
+        area_id="city:new-york", city="New York", state="NY", country="US")
+
+
+def test_a_correction_made_is_read_with_its_id_and_that_id_retires_it(world):
+    _stay_on(world)
+    made = call("record_trip_correction", {"kind": "returned", "date": "2026-03-06", "record_ids": ["f-out"], "reason": "stayed on"})["result"]
+    cid = made["correction_id"]
+    for t in (call("get_trip", {"trip_key": "f-out"})["result"], trips(call("list_trips", {}))[0]):
+        (c,) = t["corrections"]
+        assert (c["correction_id"], c["kind"], c["status"], c["date_iso"], c["record_ids"], c["created_at"]) == \
+            (cid, "returned", "active", "2026-03-06", ["f-out"], made["created_at"])
+    assert call("list_trips", {})["result"]["corrections"][0]["correction_id"] == cid
+    # a dry run writes nothing: still active afterwards
+    dry = call("retire_trip_correction", {"correction_id": cid, "dry_run": True})
+    assert dry["success"], dry
+    assert call("get_trip", {"trip_key": "f-out"})["result"]["corrections"][0]["status"] == "active"
+    assert call("retire_trip_correction", {"correction_id": cid})["success"]
+    t = call("get_trip", {"trip_key": "f-out"})["result"]
+    assert [(c["correction_id"], c["status"]) for c in t["corrections"]] == [(cid, "retired")]
+    assert t["boundaries"]["last"]["basis"] == "derived" and "corrections" not in t["boundaries"]["last"]  # reopened
+    assert [(c["correction_id"], c["status"]) for c in call("list_trips", {})["result"]["corrections"]] == [(cid, "retired")]
+
+
+def test_a_leave_out_attaches_to_no_trip_but_its_id_is_in_the_listing(world):
+    round_trip(world, "a", "2026-03-01", "2026-03-04")
+    flight(world, "x", "2026-04-01", "SEA", "MIA")
+    cid = call("record_trip_correction", {"kind": "leave_out", "record_ids": ["x"]})["result"]["correction_id"]
+    out = call("list_trips", {})["result"]
+    assert all(c["correction_id"] != cid for t in out["trips"] for c in t["corrections"])
+    assert [(c["correction_id"], c["kind"], c["status"]) for c in out["corrections"]] == [(cid, "leave_out", "active")]

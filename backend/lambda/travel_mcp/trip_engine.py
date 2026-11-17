@@ -494,8 +494,10 @@ def _finalize(s, home, today, corr, applied, near_km):
         "state": _state(fd, lb, ld, s, today), "flags": flags, "signals": [],
         "residence_period": {k: per["src"].get(k) for k in
                              ("residence_uid", "city", "state", "country", "first_night", "last_night", "tenure", "evidence")},
-        "corrections": [{"kind": c.get("kind"), "date": c.get("date"), "record_ids": sorted(c.get("record_ids") or []),
-                         "author": c.get("author"), "question_id": c.get("question_id")} for c in mine],
+        "corrections": [{"correction_id": c.get("correction_id"), "kind": c.get("kind"), "status": c.get("status", "active"),
+                         "date": c.get("date"), "date_iso": c.get("date_iso"), "record_ids": sorted(c.get("record_ids") or []),
+                         "created_at": c.get("created_at"), "author": c.get("author"),
+                         "question_id": c.get("question_id")} for c in mine],
         "record_ids": [e["id"] for e in recs],
     }
 

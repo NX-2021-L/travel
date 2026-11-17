@@ -126,6 +126,15 @@ async def _home_places():
     return body["result"]["home_places"]
 
 
+def _attach_retired(trips, retired):
+    """Retired corrections are not engine input; list them on the trips they touched, marked status=retired,
+    so a client can see (and not re-retire) them. The trip's dates never depend on them."""
+    for t in trips:
+        ids = set(t["record_ids"])
+        t["corrections"] += [{k: c.get(k) for k in contract.TRIP_CORRECTION_FIELDS}
+                             for c in retired if ids & set(c["record_ids"])]
+
+
 async def _compute():
     today = _today()
     records = await asyncio.to_thread(_records)
@@ -136,11 +145,15 @@ async def _compute():
         raise _Refuse(exc.code, exc.message, exc.code == "HOME_UNAVAILABLE")
     places = await _home_places()
     try:
-        corrections = await asyncio.to_thread(lane_2e_corrections.engine_corrections)
+        every = await asyncio.to_thread(lane_2e_corrections.load_corrections, None, True)  # retired included
+        corrections = [c for c in every if c["status"] == "active"]  # what the engine consumes
     except lane_2e_corrections._Fail as exc:
         raise _Refuse("missing", str(exc))
     try:
-        return trip_engine.compute_trips(records, _periods(read), today=today, home_places=places, corrections=corrections), today
+        result = trip_engine.compute_trips(records, _periods(read), today=today, home_places=places, corrections=corrections)
+        _attach_retired(result["trips"], [c for c in every if c["status"] != "active"])
+        result["all_corrections"] = [{k: c.get(k) for k in contract.CORRECTION_READ_FIELDS} for c in every]
+        return result, today
     except trip_engine.NoHomeRecorded:
         raise _Refuse("NO_HOME_RECORDED", "No residence period is recorded in finance, so no trip can be told from home.")
 
@@ -160,7 +173,8 @@ async def list_trips(arguments):
         result, today = await _compute()
         trips = trip_engine.order_trips_for_listing(trip_engine.trips_in_range(result["trips"], lo, hi))
         return _lf()._success({"trips": trips, "count": len(trips), "today": today.isoformat(),
-                               "excluded": result["excluded"], "unapplied_corrections": result["unapplied_corrections"]})
+                               "excluded": result["excluded"], "unapplied_corrections": result["unapplied_corrections"],
+                               "corrections": result["all_corrections"]})
     except _Refuse as exc:
         return _fail(exc)
 
@@ -174,7 +188,7 @@ def _boundary(trip, which):
     if basis == "recorded":
         # the corrections that set this boundary: `left` sets the first, `returned` the last (engine shape)
         kind = "left" if which == "first" else "returned"
-        out["corrections"] = [c for c in trip.get("corrections") or [] if c.get("kind") == kind]
+        out["corrections"] = [c for c in trip.get("corrections") or [] if c.get("kind") == kind and c.get("status") == "active"]
     return out
 
 
