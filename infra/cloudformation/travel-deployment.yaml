@@ -62,7 +62,13 @@ Parameters:
     Type: String
     Default: ""
 
+  FinanceReadCredentialSecret:
+    Type: String
+    Default: ""
+    Description: Name of the Secrets Manager secret holding the finance read credential (FLY-TSK-049). Empty = no secret path and no grant.
+
 Conditions:
+  HasFinanceSecret: !Not [!Equals [!Ref FinanceReadCredentialSecret, ""]]
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
   GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]]]
   GrantsDeployer: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalDeployRole, ""]]]
@@ -171,6 +177,16 @@ Resources:
                   - !Sub "${FlightsTable.Arn}/index/*"
                   - !GetAtt RecordsTable.Arn
                   - !Sub "${RecordsTable.Arn}/index/*"
+        - !If
+          - HasFinanceSecret
+          - PolicyName: travel-finance-credential-read
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${FinanceReadCredentialSecret}-??????"
+          - !Ref AWS::NoValue
 
   McpFunction:
     Type: AWS::Lambda::Function
@@ -199,6 +215,7 @@ Resources:
           COGNITO_REGION: !Ref CognitoRegion
           COGNITO_ALLOWED_SUBS: !Ref CognitoAllowedSubs
           IOGRAPH_ALLOWED_SUBS: !Ref IographAllowedSubs
+          FINANCE_READ_CREDENTIAL_SECRET: !If [HasFinanceSecret, !Ref FinanceReadCredentialSecret, !Ref "AWS::NoValue"]
 
   # Public edge only: both resources below are guarded by IsPublicEdge. An internal
   # deployment gets no Function URL and no public invoke grant.
