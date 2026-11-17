@@ -226,7 +226,7 @@ def test_engine_surface_is_deterministic_and_carries_the_contract_fields(table):
     record({"kind": "left", "date": "2026-03-01", "record_ids": ["f1"]})
     a, b = lane.engine_corrections(table), lane.engine_corrections(table)
     assert a == b and [c["created_at"] for c in a] == sorted(c["created_at"] for c in a)
-    assert set(a[0]) == {"correction_id", "kind", "date", "record_ids", "reason", "author", "session",
+    assert set(a[0]) == {"correction_id", "kind", "date", "date_iso", "record_ids", "reason", "author", "session",
                          "question_id", "status", "created_at", "retired_at", "retired_by"}
 
 
@@ -323,8 +323,11 @@ def test_real_engine_returned_changes_trip_survives_rebuild_and_reopens_on_retir
     cid = record({"kind": "returned", "date": "2024-03-06", "record_ids": ["f1"], "session": "s1"})["correction_id"]
     t = _trips(OPEN, table)["trips"][0]
     assert (t["last_date"], t["last_basis"]) == ("2024-03-06", "recorded") and "return not recorded" not in t["flags"]
-    assert t["corrections"] == [{"kind": "returned", "date": "2024-03-06", "record_ids": ["f1"],
-                                 "author": "io@example.test", "question_id": None}]
+    (c,) = t["corrections"]
+    assert c["correction_id"] == cid and c["status"] == "active" and c["created_at"]
+    assert {k: c[k] for k in ("kind", "date", "date_iso", "record_ids", "author", "question_id")} == {
+        "kind": "returned", "date": "2024-03-06", "date_iso": "2024-03-06", "record_ids": ["f1"],
+        "author": "io@example.test", "question_id": None}
 
     closed = _shape(_trips(OPEN, table))
     rebuilt = _shape(te.compute_trips(list(reversed(OPEN)), [_HOME], today="2024-12-01", corrections=lane.engine_corrections(

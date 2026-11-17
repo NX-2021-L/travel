@@ -162,6 +162,11 @@ TRIP_STATE_MEANING = {
 TRIP_LIST_ORDER = ("under way", "upcoming", "planned", "past")  # past newest first
 TRIP_FIELDS = ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited", "legs",
                "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
+# What a client reads to find a correction's id (retire_trip_correction takes correction_id). Each trip's
+# `corrections` lists the ones touching it, retired included and marked; list_trips also returns every
+# correction (any status, any kind, so leave_out and confirmed ones that attach to no trip) as `corrections`.
+TRIP_CORRECTION_FIELDS = ["correction_id", "kind", "status", "date", "date_iso", "record_ids", "created_at", "author", "question_id"]
+CORRECTION_READ_FIELDS = ["correction_id", "kind", "status", "date_iso", "record_ids", "created_at"]
 GET_TRIP_EXTRA_FIELDS = ["first_rule", "last_rule"]  # the rule behind each derived boundary
 
 # Questions: one per flag and per signal. Ids are registered here; WORDING is io's vocabulary

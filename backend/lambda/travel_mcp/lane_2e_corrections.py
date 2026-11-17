@@ -77,6 +77,7 @@ _CONFIRMED_ONLY = ("first_date", "last_date", "method", "supersedes")
 def _present(item):
     out = {
         "correction_id": item.get("record_id"), "kind": item.get("correction_kind"), "date": item.get("date"),
+        "date_iso": item.get("date_iso"),
         "record_ids": list(item.get("record_ids") or []), "reason": item.get("reason"),
         "author": item.get("author"), "session": item.get("session"), "question_id": item.get("question_id"),
         "status": item.get("status"), "created_at": item.get("created_at"),
