@@ -1,6 +1,7 @@
 """MOM-TSK-007-0G (lane N6G): isolation, parity and refusal tests for her travel deployment, on fixtures. Offline: no AWS call.
 The live reading is scripts/verify_isolation.py (read-only); here every judgement it makes is proved on both a clean
 fixture and a broken one, so a check that cannot fail cannot pass either. The drill is NOT run here (it deploys)."""
+import pathlib
 import io
 import json
 import os
@@ -252,3 +253,9 @@ def test_drill_compare_hers_back_and_io_not_undone():
     assert vi.drill_problems(before, _snap("H2"))  # hers did not return
     assert vi.drill_problems(before, _snap("H1", keys=("A",)))
     assert vi.drill_problems(before, _snap("H1", io_sha="OLD", rp="OLD"))  # io's restored on account of hers
+
+
+def test_verify_script_sends_the_doors_health_method():
+    # The live check must send the door's own health method; a mismatch reads as a door failure.
+    src = (pathlib.Path(__file__).resolve().parents[1] / "scripts" / "verify_isolation.py").read_text()
+    assert f'"method": "{door.HEALTH_METHOD}"' in src

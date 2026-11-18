@@ -252,7 +252,7 @@ def cmd_live(a) -> int:
     texts.append(aws(a.io_profile, region_io, "iam", "get-role", "--role-name", io_env.get("LAMBDA_ROLE_NAME", "io-travel-mcp-lambda-role")).stdout)
     check("no travel resource of io's names her account", [f"io-side text #{i} names her account" for i in names_account(texts, acct)])
     # refused live, both directions
-    health_event = {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "health"}}
+    health_event = {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "ping"}}
     r, _ = _invoke(a.io_profile, region_her, f"arn:aws:lambda:{region_her}:{acct}:function:{fn_her}", health_event)
     check("io's role is refused invoking her function (live)", [] if is_refused(r.returncode, r.stderr) else ["not refused"])
     for t in (her["TABLE_NAME"], her["RECORDS_TABLE_NAME"]):
@@ -264,7 +264,7 @@ def cmd_live(a) -> int:
         r = aws(a.nana_profile, region_io, "dynamodb", "describe-table", "--table-name", f"arn:aws:dynamodb:{region_io}:{io_acct}:table/{t}")
         check(f"her profile is refused on io's table {t} (live)", [] if is_refused(r.returncode, r.stderr) else ["not refused"])
     # the door: health from the deploy role, then the three refusals (none of them reaches a tool)
-    ev = lambda **k: {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "health"}, **k}  # noqa: E731
+    ev = lambda **k: {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "ping"}, **k}  # noqa: E731
     _, h = _invoke(a.nana_profile, region_her, fn_her, ev())
     _, n = _invoke(a.nana_profile, region_her, fn_her, {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}})
     _, w = _invoke(a.nana_profile, region_her, fn_her, {"requestContext": {"http": {"method": "POST", "path": "/mcp"}}, "rawPath": "/mcp", "headers": {}})
