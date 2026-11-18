@@ -62,13 +62,13 @@ Parameters:
     Type: String
     Default: ""
 
-  FinanceReadCredentialSecret:
+  FinanceReadFunction:
     Type: String
     Default: ""
-    Description: Name of the Secrets Manager secret holding the finance read credential (FLY-TSK-049). Empty = no secret path and no grant.
+    Description: ARN of finance's Lambda function, invoked directly for the residence read (FLY-TSK-078). Empty = no finance call and no grant. Finance's own resource policy must also name this deployment's role.
 
 Conditions:
-  HasFinanceSecret: !Not [!Equals [!Ref FinanceReadCredentialSecret, ""]]
+  HasFinanceFunction: !Not [!Equals [!Ref FinanceReadFunction, ""]]
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
   GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]]]
   GrantsDeployer: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalDeployRole, ""]]]
@@ -178,14 +178,14 @@ Resources:
                   - !GetAtt RecordsTable.Arn
                   - !Sub "${RecordsTable.Arn}/index/*"
         - !If
-          - HasFinanceSecret
-          - PolicyName: travel-finance-credential-read
+          - HasFinanceFunction
+          - PolicyName: travel-finance-residence-invoke
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
                 - Effect: Allow
-                  Action: secretsmanager:GetSecretValue
-                  Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${FinanceReadCredentialSecret}-??????"
+                  Action: lambda:InvokeFunction
+                  Resource: !Ref FinanceReadFunction
           - !Ref AWS::NoValue
 
   McpFunction:
@@ -215,7 +215,7 @@ Resources:
           COGNITO_REGION: !Ref CognitoRegion
           COGNITO_ALLOWED_SUBS: !Ref CognitoAllowedSubs
           IOGRAPH_ALLOWED_SUBS: !Ref IographAllowedSubs
-          FINANCE_READ_CREDENTIAL_SECRET: !If [HasFinanceSecret, !Ref FinanceReadCredentialSecret, !Ref "AWS::NoValue"]
+          FINANCE_READ_FUNCTION: !If [HasFinanceFunction, !Ref FinanceReadFunction, !Ref "AWS::NoValue"]
 
   # Public edge only: both resources below are guarded by IsPublicEdge. An internal
   # deployment gets no Function URL and no public invoke grant.

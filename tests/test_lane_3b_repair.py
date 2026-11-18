@@ -35,9 +35,8 @@ ENGINE_HOME = [{"residence_uid": "R1", "first_night": "2020-01-01", "last_night"
 
 
 def finance(periods):
-    inner = {"success": True, "result": {"periods": periods}}
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json.dumps(inner)}]}}).encode()
-    return lambda url, headers, b, timeout: (200, body)
+    body = json.dumps({"ok": True, "result": {"periods": periods}}).encode()
+    return lambda function, payload, timeout: (None, body)
 
 
 def fl(fid, date, o, d, **kw):
@@ -54,8 +53,7 @@ def home_places(**place):
 def world(monkeypatch):
     monkeypatch.setenv("RECORDS_TABLE_NAME", RECORDS)
     monkeypatch.setattr(lane, "_today", lambda: TODAY)
-    monkeypatch.setattr(lane, "_HOME_KWARGS", {"transport": finance([PERIOD]), "credential": lambda: "t",
-                                               "endpoint": "https://finance.example.test/"})
+    monkeypatch.setattr(lane, "_HOME_KWARGS", {"invoker": finance([PERIOD]), "function": "finance-fn-test"})
     monkeypatch.setattr(lf, "_dynamo_resource", None)
     with mock_aws():
         db = boto3.resource("dynamodb", region_name="us-west-2")
@@ -134,7 +132,7 @@ def test_every_flag_and_signal_has_exactly_one_registered_question():
 def test_each_question_has_two_to_four_answers_and_one_correction_kind_each(world, name):
     qid = contract.QUESTIONS[name]
     if name == "home not recorded for these dates":
-        lane._HOME_KWARGS["transport"] = finance([{**PERIOD, "effective_from": "2024-06-01"}])
+        lane._HOME_KWARGS["invoker"] = finance([{**PERIOD, "effective_from": "2024-06-01"}])
         recs = OPEN + LATER_PAIR
     else:
         recs = _scenarios()[name]
@@ -258,7 +256,7 @@ def test_a_signal_the_records_keep_raising_closes_by_being_answered(world, name,
 
 
 def test_home_not_recorded_has_no_answer_to_choose(world):
-    lane._HOME_KWARGS["transport"] = finance([{**PERIOD, "effective_from": "2024-06-01"}])
+    lane._HOME_KWARGS["invoker"] = finance([{**PERIOD, "effective_from": "2024-06-01"}])
     world.put(*OPEN, *LATER_PAIR)
     t = next(t for t in undecided()["trips"] if t["key"] == "f1")
     q = next(q for q in t["questions"] if q["question_id"] == "q_home_not_recorded")
@@ -362,9 +360,9 @@ def test_list_respects_range_and_limit_and_reports_finance_errors(world):
     assert undecided()["count"] == 2 and len(undecided(limit=1)["trips"]) == 1
     assert [t["key"] for t in undecided(date_to="2024-03-02")["trips"]] == ["f1"]
     assert call("list_undecided_trips", {"limit": 0})["error_envelope"]["code"] == "invalid"
-    lane._HOME_KWARGS["transport"] = finance([])
+    lane._HOME_KWARGS["invoker"] = finance([])
     assert call("list_undecided_trips", {})["error_envelope"]["code"] == "NO_HOME_RECORDED"
-    lane._HOME_KWARGS["transport"] = lambda *a: (503, b"")
+    lane._HOME_KWARGS["invoker"] = lambda *a: (_ for _ in ()).throw(TimeoutError("t"))
     assert call("list_undecided_trips", {})["error_envelope"]["code"] == "HOME_UNAVAILABLE"
 
 

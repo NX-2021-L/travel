@@ -61,7 +61,7 @@ def _today():
 
 
 def _read_home(date_from, date_to):
-    """The seam tests replace; production is home_service.read_home with its own transport and credential."""
+    """The seam tests replace; production is home_service.read_home, a direct invoke through the function's own role."""
     return home_service.read_home(date_from, date_to)
 
 

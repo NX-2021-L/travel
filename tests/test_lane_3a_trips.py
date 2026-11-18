@@ -46,7 +46,7 @@ import lane_3a_trips as lane  # noqa: E402
 
 FLIGHTS, RECORDS = "io-travel-flights", "test-records"
 TODAY = date(2026, 6, 15)
-URL, TOKEN = "https://finance.example.test/", "test-bearer"
+FN, TOKEN = "finance-fn-test", "test-bearer"
 PERIODS = [{"effective_from": "2020-01-01", "effective_to": None, "end_status": "ongoing", "residence_uid": "res-a",
             "tenure": "rented", "state": "S1", "country": "ZZ"}]
 
@@ -55,13 +55,11 @@ class Finance:
     def __init__(self, periods=PERIODS, status=200, exc=None):
         self.periods, self.status, self.exc, self.windows = periods, status, exc, []
 
-    def __call__(self, url, headers, body, timeout):
-        self.windows.append(json.loads(body))
+    def __call__(self, function, payload, timeout):
+        self.windows.append(json.loads(payload))
         if self.exc:
             raise self.exc
-        inner = {"success": True, "tool": "finance.residence_periods", "result": {"periods": self.periods}}
-        env = {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json.dumps(inner)}], "isError": False}}
-        return self.status, json.dumps(env).encode()
+        return None, json.dumps({"ok": True, "result": {"periods": self.periods}}).encode()
 
 
 @pytest.fixture
@@ -83,7 +81,7 @@ def world(monkeypatch):
         monkeypatch.setattr(lf, "TABLE_NAME", FLIGHTS)
         fin = Finance()
         monkeypatch.setattr(lane, "_today", lambda: TODAY)
-        monkeypatch.setattr(lane, "_read_home", lambda a, b: hs.read_home(a, b, transport=fin, credential=lambda: TOKEN, endpoint=URL))
+        monkeypatch.setattr(lane, "_read_home", lambda a, b: hs.read_home(a, b, invoker=fin, function=FN))
         tok = lf._PRINCIPAL.set(dict(lf.INTERNAL_PRINCIPAL))
         w = types.SimpleNamespace(flights=flights, records=records, finance=fin)
         hp = call("set_home_places", {"residence_uid": "res-a", "places": [{"place_id": "apt:SEA", "area_id": "city:seattle"}]})

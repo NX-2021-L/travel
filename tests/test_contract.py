@@ -158,7 +158,7 @@ def test_error_codes():
 def test_settings_keys_and_no_instance_values():
     assert set(c.SETTINGS) == {
         "TABLE_NAME", "RECORDS_TABLE_NAME", "SURFACE_NAME", "FINANCE_READ_FUNCTION", "COGNITO_USER_POOL_ID",
-        "FINANCE_READ_CREDENTIAL_SECRET", "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "IOGRAPH_ALLOWED_SUBS",
+        "COGNITO_CLIENT_ID", "COGNITO_REGION", "COGNITO_ALLOWED_SUBS", "IOGRAPH_ALLOWED_SUBS",
         "TRAVEL_WRITE_GROUPS", "PUBLIC_BASE_URL", "CORS_ORIGINS"}
     assert all(set(v) == {"required", "purpose"} for v in c.SETTINGS.values())
     src = (D / "contract.py").read_text().lower()

@@ -9,6 +9,7 @@ resolve_env.py and scripts/release_ops.py call missing_required() so the deploy 
 Messages name KEYS only, never values.
 """
 import os
+import re
 
 import contract  # a package without contract.py must fail to start, not degrade
 
@@ -22,6 +23,22 @@ class SettingsError(RuntimeError):
 
 def _blank(value) -> bool:
     return not str(value or "").strip(" ,\t\n")
+
+
+# A Lambda function name (1-64 of letters, digits, hyphen, underscore) or a function ARN, optionally with a
+# version or alias. A URL (scheme, dots, slashes) never matches.
+_FUNCTION_REF = re.compile(
+    r"^(arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:)?[A-Za-z0-9_-]{1,64}(:[A-Za-z0-9_$-]{1,128})?$")
+
+
+def finance_function_problem(value) -> str:
+    """"" when `value` looks like a Lambda function name or ARN; otherwise a short reason (KEY-free, value-free)."""
+    v = str(value or "").strip()
+    if not v:
+        return "is not set"
+    if not _FUNCTION_REF.match(v):
+        return "is not a Lambda function name or ARN (a URL is no longer accepted)"
+    return ""
 
 
 def _env(environ):

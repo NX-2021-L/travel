@@ -26,7 +26,7 @@ DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEAR
 
 # FLY-TSK-022: retired by the edge adoption. Stripped from the function env on every deploy so a
 # stale confidential-client secret or static key can never survive the merge with CURRENT_ENV.
-DROPPED = ("FINANCE_READ_CREDENTIAL",  # FLY-TSK-049: the literal is retired for the secret; stripped from the live function on deploy
+DROPPED = ("FINANCE_READ_CREDENTIAL", "FINANCE_READ_CREDENTIAL_SECRET",  # FLY-TSK-049/078: the bearer path is retired; stripped from the live function on deploy
            "COGNITO_CLIENT_SECRET", "COGNITO_DOMAIN", "SERVER_BASE_URL", "MCP_API_KEY",
            "IOGRAPH_POOL_ID", "IOGRAPH_REGION", "IOGRAPH_CLIENT_IDS")
 
@@ -48,6 +48,8 @@ def guard(env: dict) -> str:
     """
     if env.get("COGNITO_USER_POOL_ID") and not (env.get("COGNITO_ALLOWED_SUBS") or "").strip(" ,"):
         return "refusing to deploy: COGNITO_USER_POOL_ID is set but COGNITO_ALLOWED_SUBS is empty (would lock out the Cognito path)"
+    if env.get("FINANCE_READ_FUNCTION") and settings.finance_function_problem(env["FINANCE_READ_FUNCTION"]):
+        return "refusing to deploy: FINANCE_READ_FUNCTION must be a Lambda function name or ARN, not a URL"
     missing = settings.missing_required(env)
     if missing:
         return "refusing to deploy: required settings absent: " + ", ".join(sorted(missing))
