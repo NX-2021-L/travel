@@ -74,7 +74,7 @@ def test_stack_parameters_name_no_invoker_and_each_role_exactly():
 # ---- the workflow: one run, io's first, hers after, each under its own role ----
 def test_hers_runs_after_io_and_only_when_io_passed():
     assert WF["jobs"]["nana"]["needs"] == "release"  # a failed release (io's check) leaves hers untouched
-    assert "always()" not in str(WF["jobs"]["nana"].get("if", ""))
+    assert "needs.release.result == 'success'" in WF["jobs"]["nana"]["if"]  # always() alone would run it after io's failure
 
 
 def test_each_job_assumes_its_own_role_afresh():
@@ -82,18 +82,39 @@ def test_each_job_assumes_its_own_role_afresh():
         return [s["with"]["role-to-assume"] for s in WF["jobs"][job]["steps"] if "with" in s and "role-to-assume" in s["with"]]
     assert roles("release") == ["${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}"]
     assert roles("nana") == ["${{ steps.role.outputs.role_arn }}"]
-    assert roles("undo-io") == ["${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}"]  # io's role again, after hers failed
     assert roles("rollback-nana") == ["${{ steps.role.outputs.role_arn }}"]
 
 
-def test_a_failed_check_on_hers_returns_both():
+def test_a_failed_check_on_hers_never_undoes_ios_release():
+    """io ruling 2026-11-18, amendment to NQ-13: her failure fails the run; io's release stays on the new build."""
     nana = [s["name"] for s in WF["jobs"]["nana"]["steps"]]
     idx = {k: next(i for i, n in enumerate(nana) if n.startswith(k)) for k in ("Plan", "Apply", "Verify", "Undo")}
-    assert idx["Plan"] < idx["Apply"] < idx["Verify"] < idx["Undo"]
-    undo_io = WF["jobs"]["undo-io"]
-    assert undo_io["needs"] == ["release", "nana"]
-    assert "needs.nana.result == 'failure'" in undo_io["if"]
-    assert WF["jobs"]["release"]["outputs"]["pre_deploy_version"]  # the restore point io's undo needs
+    assert idx["Plan"] < idx["Apply"] < idx["Verify"] < idx["Undo"]  # her own undo stays
+    assert "undo-io" not in WF["jobs"]
+    for name, job in WF["jobs"].items():  # nothing is coupled to her job's outcome except her own manual way back's twin
+        needs = job.get("needs") or []
+        needs = [needs] if isinstance(needs, str) else needs
+        assert "nana" not in needs, name
+    text = yaml.safe_dump(WF)
+    assert "needs.nana" not in text
+    assert "pre_deploy_version" not in str(WF["jobs"]["release"].get("outputs", {}))  # nothing carries io's restore point out
+    assert WF["jobs"]["nana"]["steps"][-1]["if"] == "steps.verify.outcome == 'failure'"  # her failure fails the run, visibly
+    assert WF["jobs"]["nana"]["steps"][-1]["run"].rstrip().endswith("exit 1")
+
+
+def test_io_release_undo_stays_inside_the_release_job_and_runs_only_on_ios_own_failure():
+    steps = {s["name"].split(" ")[0]: s for s in WF["jobs"]["release"]["steps"]}
+    assert steps["Undo"]["if"] == "steps.verify.outcome == 'failure'"  # io's verify, not hers
+    assert WF["jobs"]["nana"]["needs"] == "release"  # so io's failed check leaves hers unstarted
+
+
+def test_hers_alone_can_be_retried_by_dispatch_and_io_is_then_untouched():
+    opts = WF[True]["workflow_dispatch"]["inputs"]["action"]["options"]
+    assert opts == ["deploy", "deploy-nana", "rollback"]
+    assert WF["jobs"]["release"]["if"] == "github.event_name == 'push' || inputs.action == 'deploy'"  # skipped on deploy-nana
+    cond = WF["jobs"]["nana"]["if"]
+    assert "needs.release.result == 'success'" in cond and "inputs.action == 'deploy-nana'" in cond
+    assert WF["jobs"]["rollback"]["if"] == "github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'"
 
 
 def test_her_plan_is_shown_before_apply_and_changes_nothing():

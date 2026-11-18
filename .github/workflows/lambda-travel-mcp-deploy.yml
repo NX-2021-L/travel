@@ -3,9 +3,12 @@ name: Lambda Deploy - travel-mcp
 # Deploy path (FLY-TSK-027-0A): plan -> apply -> verify -> undo.
 # MOM-TSK-007-0F (lane N6F): the path gains a second target, her deployment in her own AWS account
 # (deploy/targets/nana.env). One run deploys io's deployment first (job release, io's deploy role) and hers after
-# it (job nana, her deploy role, assumed afresh), the same commit, each plan shown before it is applied. A failed
-# check on io's returns io's and stops before hers is touched; a failed check on hers returns hers (its own job,
-# its own role) and then io's (job undo-io, io's role again), so the two never run different builds (NQ-13).
+# it (job nana, her deploy role, assumed afresh), the same commit, each plan shown before it is applied.
+# io ruling 2026-11-18, amendment to NQ-13: a failed deploy of hers NEVER undoes io's release. io's release has its
+# own undo, inside job release, and it runs only when io's own check fails (hers is then not started). A failure of
+# hers undoes hers alone, under her own role (a first release has no previous one to restore), fails the run and
+# stays visible; io's release stays on the new build. Hers is retried on the next merge, or by a dispatch with
+# action=deploy-nana (re-deploys the dispatched ref's build to her target alone).
 # Her account id is never in this repository: it is the repository variable named by ACCOUNT_ID_VARIABLE.
 # There is NO alias: CloudFront fronts the unqualified Function URL, so $LATEST serves live
 # traffic. The way back is a version restore onto $LATEST (scripts/release_ops.py restore),
@@ -21,9 +24,9 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy = plan/apply/verify/undo; rollback = restore a published version onto $LATEST, nothing else"
+        description: "deploy = plan/apply/verify/undo of io's then hers; deploy-nana = retry hers alone (io's is not touched); rollback = restore a published version onto $LATEST, nothing else"
         type: choice
-        options: [deploy, rollback]
+        options: [deploy, deploy-nana, rollback]
         default: deploy
       rollback_to_version:
         description: "rollback only: published version number to restore (blank = the previous release, i.e. the highest published version)"
@@ -67,10 +70,8 @@ concurrency:
 
 jobs:
   release:
-    if: github.event_name == 'push' || inputs.action != 'rollback'
+    if: github.event_name == 'push' || inputs.action == 'deploy'
     runs-on: ubuntu-latest
-    outputs:
-      pre_deploy_version: ${{ steps.apply.outputs.pre_deploy_version }}
     env:
       FORCE_VERIFY_FAIL: ${{ inputs.force_verify_fail && 'true' || 'false' }}
       DRILL_EXPECT_EXTRA_MODULE: ${{ inputs.drill_withhold_module }}
@@ -173,12 +174,10 @@ jobs:
   nana:
     # Her deployment, after io's has been deployed and has passed its checks (needs: release succeeded).
     needs: release
-    if: github.event_name == 'push' || inputs.action != 'rollback'
+    # Runs after a passing release; or alone, on a dispatch with action=deploy-nana (release is then skipped).
+    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.action == 'deploy-nana'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    outputs:
-      pre_deploy_version: ${{ steps.apply.outputs.pre_deploy_version }}
-      first_release: ${{ steps.apply.outputs.first_release }}
     env:
       PYTHONUNBUFFERED: "1"
       AWS_PAGER: ""
@@ -250,8 +249,8 @@ jobs:
         run: |
           VER="${{ steps.apply.outputs.pre_deploy_version }}"
           if [ -z "${VER}" ]; then
-            echo "::error::her first release failed its check: there is no previous release of hers to restore. Her tables refuse deletion and her deploy role cannot delete a stack, so this path stops and io's deployment is returned by the next job. CALL io for her stack."
-            echo "### Her first release failed its check; no previous release to restore. Call io for her stack." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::her first release failed its check: there is no previous release of hers to restore. Her tables refuse deletion and her deploy role cannot delete a stack, so this path stops; io's release stays on the new build. CALL io for her stack, then retry hers (next merge, or dispatch action=deploy-nana)."
+            echo "### Her first release failed its check; no previous release to restore. io's release is unaffected. Call io for her stack; retry with action=deploy-nana." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "verify failed; restoring her version ${VER}"
@@ -262,34 +261,8 @@ jobs:
       - name: Fail the run if verify failed (the failure stays visible)
         if: steps.verify.outcome == 'failure'
         run: |
-          echo "her verify failed; io's deployment is returned by the undo-io job"
+          echo "her verify failed; her release is undone above where one exists. io's release is NOT undone (io ruling 2026-11-18). Retry hers: next merge, or dispatch action=deploy-nana"
           exit 1
-
-  undo-io:
-    # A failed check on hers returns io's too, under io's own role, afresh (NQ-13).
-    timeout-minutes: 20
-    needs: [release, nana]
-    if: always() && needs.release.result == 'success' && needs.nana.result == 'failure' && needs.release.outputs.pre_deploy_version != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Load deployment settings
-        run: python3 scripts/load_deployment_settings.py deploy/settings.env
-      - name: Configure AWS credentials (OIDC, io's deploy role)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_BACKEND_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Undo - restore io's previous release, the one hers was returned with
-        run: |
-          python3 scripts/release_ops.py restore --version "${{ needs.release.outputs.pre_deploy_version }}"
-          bash scripts/mcp_post_deploy_probe.sh "${PROBE_MCP_URL}" "${PROBE_SIGNIN_URL}"
-          echo "### Undo: io's deployment restored to version ${{ needs.release.outputs.pre_deploy_version }} after a failed check on hers" >> "$GITHUB_STEP_SUMMARY"
 
   rollback:
     # One action by a person: Run workflow -> action=rollback. Does step 4 alone.
