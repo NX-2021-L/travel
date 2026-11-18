@@ -182,7 +182,6 @@ jobs:
       FORCE_VERIFY_FAIL: ${{ inputs.force_nana_verify_fail && 'true' || 'false' }}
       DRILL_EXPECT_EXTRA_MODULE: ${{ inputs.drill_withhold_module }}
       TARGET_ACCOUNT_ID: ${{ vars.NANA_AWS_ACCOUNT_ID }}
-      PACKAGE_ZIP: ${{ runner.temp }}/travel-mcp-package.zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -215,6 +214,8 @@ jobs:
             --extra-index-url "https://aws:${TOKEN}@${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/pypi/${CODEARTIFACT_REPOSITORY}/simple/" --quiet
 
       - name: Build the package (the same build io's deployment ships; nothing is deployed here)
+        env:
+          PACKAGE_ZIP: ${{ runner.temp }}/travel-mcp-package.zip
         run: PACKAGE_ONLY="${PACKAGE_ZIP}" bash backend/lambda/travel_mcp/deploy.sh
 
       - name: Plan (read-only; her change set is shown and not executed)
@@ -222,6 +223,8 @@ jobs:
 
       - name: Apply - publish restore point, execute the plan, ship the package
         id: apply
+        env:
+          PACKAGE_ZIP: ${{ runner.temp }}/travel-mcp-package.zip
         run: python3 scripts/target_ops.py apply
 
       - name: Verify (read-only; the health read, no address, no public permission, the deployed package)
