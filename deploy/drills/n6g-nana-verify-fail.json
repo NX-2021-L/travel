@@ -1,0 +1,17 @@
+{
+  "_comment": "Drill input for the failure of HER deployment (MOM-TSK-007-0G). io to schedule: it deploys. Not run by CI. Inputs are the ones lambda-travel-mcp-deploy.yml already has.",
+  "workflow": "lambda-travel-mcp-deploy.yml",
+  "repo": "NX-2021-L/travel",
+  "ref": "main",
+  "inputs": {
+    "action": "deploy",
+    "force_nana_verify_fail": "true",
+    "reason": "N6G drill: a check made to fail on hers returns hers alone; io's stays on its build"
+  },
+  "alternative_hers_alone": {"action": "deploy-nana", "force_nana_verify_fail": "true"},
+  "expected": [
+    "job release: success (io's deploy and checks pass; its release is NOT undone)",
+    "job nana: verify fails by design; the Undo step restores her previous release under her deploy role",
+    "run conclusion: failure (the drill fails visibly by design)"
+  ]
+}
