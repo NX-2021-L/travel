@@ -50,7 +50,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: testing
           AWS_SESSION_TOKEN: testing
         run: |
-          if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py tests/test_settings_fail_closed.py tests/test_no_instance_values.py tests/test_travel_deployment_template.py tests/test_door.py tests/test_door_acting_person.py; fi
+          if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py tests/test_settings_fail_closed.py tests/test_no_instance_values.py tests/test_travel_deployment_template.py tests/test_door.py tests/test_door_acting_person.py tests/test_isolation_verification.py; fi
       - name: Caps snapshot drift check
         if: steps.aws.outcome == 'success'
         run: python3 scripts/emit_caps.py --check
