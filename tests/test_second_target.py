@@ -169,3 +169,53 @@ def test_deploy_script_makes_a_function_url_only_for_a_public_door():
     guard = sh.index('"${DOOR_MODE:-public}" = "internal"')
     assert guard < sh.index("create-function-url-config") and guard < sh.index("add-permission")
     assert 'PACKAGE_ONLY' in sh and sh.index("PACKAGE_ONLY") < sh.index("get-function-configuration")
+
+
+# ---- a hang is never silent and never unbounded (run 44370894800: apply sat for an hour printing nothing) ----
+def test_every_aws_call_is_pagerless_bounded_and_logged(monkeypatch, capsys):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["kw"] = cmd, kw
+        class R:  # noqa: E306
+            returncode, stdout, stderr = 0, "", ""
+        return R()
+    monkeypatch.setattr(to.subprocess, "run", fake_run)
+    to.aws("lambda", "get-function", "--function-name", "f", region="r", timeout=7)
+    assert "--no-cli-pager" in seen["cmd"] and "--cli-read-timeout" in seen["cmd"] and "--cli-connect-timeout" in seen["cmd"]
+    assert seen["kw"]["timeout"] == 7 and seen["kw"]["stdin"] == to.subprocess.DEVNULL
+    out = capsys.readouterr().out
+    assert "aws lambda get-function" in out and "--function-name" not in out and "f" not in out.split("get-function")[1].split("(")[0]
+
+
+def test_a_timed_out_aws_call_stops_the_run_loudly(monkeypatch, capsys):
+    def boom(cmd, **kw):
+        raise to.subprocess.TimeoutExpired(cmd, kw["timeout"])
+    monkeypatch.setattr(to.subprocess, "run", boom)
+    with pytest.raises(SystemExit) as e:
+        to.aws("cloudformation", "describe-stacks", region="r", timeout=1)
+    assert e.value.code == 124 and "TIMEOUT" in capsys.readouterr().out
+
+
+def test_there_is_no_aws_waiter_left_in_her_path():
+    src = (ROOT / "scripts/target_ops.py").read_text()
+    assert '"cloudformation", "wait"' not in src and '"lambda", "wait"' not in src
+
+
+def test_stack_wait_states():
+    assert to.stack_wait_state("CREATE_COMPLETE") == to.stack_wait_state("UPDATE_COMPLETE") == "done"
+    assert to.stack_wait_state("CREATE_IN_PROGRESS") == "wait"
+    for bad in ("ROLLBACK_COMPLETE", "ROLLBACK_IN_PROGRESS", "CREATE_FAILED", "UPDATE_ROLLBACK_COMPLETE"):
+        assert to.stack_wait_state(bad) == "fail"
+
+
+def test_the_stub_is_not_a_restore_point():
+    assert to.is_stub(216) and to.is_stub("216")
+    assert not to.is_stub(41_000_000) and not to.is_stub("None")
+
+
+def test_her_jobs_are_bounded_and_unbuffered_and_io_job_is_untouched():
+    nana = WF["jobs"]["nana"]
+    assert nana["timeout-minutes"] and nana["env"]["PYTHONUNBUFFERED"] == "1" and nana["env"]["AWS_PAGER"] == ""
+    assert all("timeout-minutes" in s for s in nana["steps"] if s["name"].split(" ")[0] in ("Build", "Plan", "Apply", "Verify", "Undo"))
+    assert "timeout-minutes" not in WF["jobs"]["release"]

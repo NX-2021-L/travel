@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -110,12 +111,78 @@ def render_changes(changes: list) -> str:
 
 
 # --------------------------------------------------------------------------- aws
-def aws(*args, region, check=True):
-    r = subprocess.run(["aws", *args, "--region", region], capture_output=True, text=True)
+# A hang must never be silent (run 44370894800: apply sat for an hour with no output). Every aws call is logged
+# with a timestamp (service and operation only, never a value), has a pager-less CLI with connect and read
+# timeouts, and is killed by a hard wall-clock timeout; waiting is our own bounded loop, never `aws ... wait`.
+STUB_CODE_BYTES = 10_000  # the template's refusing stub is a few hundred bytes; a shipped package is megabytes
+
+
+def log(msg: str) -> None:
+    print(time.strftime("%H:%M:%SZ", time.gmtime()) + " [target_ops] " + msg, flush=True)
+
+
+def aws(*args, region, check=True, timeout=120, read_timeout=60):
+    op = " ".join(a for a in args[:2] if not a.startswith("-"))
+    log(f"aws {op} (limit {timeout}s)")
+    cmd = ["aws", "--no-cli-pager", "--cli-connect-timeout", "15", "--cli-read-timeout", str(read_timeout), *args, "--region", region]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        log(f"TIMEOUT: aws {op} did not finish in {timeout}s; stopped")
+        raise SystemExit(124)
+    log(f"aws {op} -> rc {r.returncode}")
     if check and r.returncode != 0:
-        print(r.stderr, file=sys.stderr)
+        print(r.stderr, file=sys.stderr, flush=True)
         raise SystemExit(r.returncode)
     return r
+
+
+def is_stub(code_size) -> bool:
+    """True when the function still holds the template's refusing stub: there is no release to restore."""
+    try:
+        return int(code_size) < STUB_CODE_BYTES
+    except (TypeError, ValueError):
+        return False
+
+
+def stack_wait_state(status: str) -> str:
+    """"done", "wait" or "fail" for a stack status while a change set executes."""
+    if status in ("CREATE_COMPLETE", "UPDATE_COMPLETE"):
+        return "done"
+    if status.endswith("_IN_PROGRESS") and "ROLLBACK" not in status:
+        return "wait"
+    return "fail"
+
+
+def wait_stack(env, deadline_s=900, interval_s=10) -> None:
+    region, stack = env["AWS_REGION"], env["STACK_NAME"]
+    end = time.time() + deadline_s
+    while time.time() < end:
+        st = aws("cloudformation", "describe-stacks", "--stack-name", stack, "--query", "Stacks[0].StackStatus", "--output", "text",
+                 region=region, timeout=90).stdout.strip()
+        log(f"stack {stack} is {st}")
+        state = stack_wait_state(st)
+        if state == "done":
+            return
+        if state == "fail":
+            raise SystemExit(f"stack {stack} reached {st}")
+        time.sleep(interval_s)
+    raise SystemExit(f"stack {stack} did not finish within {deadline_s}s")
+
+
+def wait_function(env, deadline_s=300, interval_s=5) -> None:
+    region, fn = env["AWS_REGION"], env["FUNCTION_NAME"]
+    end = time.time() + deadline_s
+    while time.time() < end:
+        out = aws("lambda", "get-function-configuration", "--function-name", fn, "--query", "[State,LastUpdateStatus]", "--output", "text",
+                  region=region, timeout=90).stdout.split()
+        log(f"function {fn} is {' '.join(out)}")
+        if out == ["Active", "Successful"]:
+            return
+        if "Failed" in out:
+            raise SystemExit(f"function {fn} update failed: {' '.join(out)}")
+        time.sleep(interval_s)
+    raise SystemExit(f"function {fn} did not become Active/Successful within {deadline_s}s")
 
 
 def _env() -> dict:
@@ -139,9 +206,12 @@ def cmd_plan(a) -> int:
         "--change-set-type", kind, "--template-body", f"file://{TEMPLATE}",
         "--parameters", json.dumps(stack_parameters(env)), "--capabilities", "CAPABILITY_NAMED_IAM",
         "--output", "text", "--query", "Id", region=region)
-    r = aws("cloudformation", "wait", "change-set-create-complete", "--stack-name", stack, "--change-set-name", name,
-            region=region, check=False)
-    cs = json.loads(aws("cloudformation", "describe-change-set", "--stack-name", stack, "--change-set-name", name, region=region).stdout)
+    cs = {}
+    for _ in range(30):  # bounded: at most about 5 minutes
+        cs = json.loads(aws("cloudformation", "describe-change-set", "--stack-name", stack, "--change-set-name", name, region=region, timeout=90).stdout)
+        if cs.get("Status") not in ("CREATE_PENDING", "CREATE_IN_PROGRESS"):
+            break
+        time.sleep(10)
     print(f"PLAN target: {env['TARGET_NAME']} stack {stack} ({region}), change set type {kind}, status {cs['Status']}")
     print(render_changes(cs.get("Changes") or []))
     if cs["Status"] == "FAILED":
@@ -165,25 +235,34 @@ def cmd_apply(a) -> int:
     env = _env()
     region, stack, fn = env["AWS_REGION"], env["STACK_NAME"], env["FUNCTION_NAME"]
     pre = ""
-    if aws("lambda", "get-function", "--function-name", fn, region=region, check=False).returncode == 0:
+    log("apply 1/5: is there a release to restore?")
+    cur = aws("lambda", "get-function-configuration", "--function-name", fn, "--query", "CodeSize", "--output", "text", region=region, check=False)
+    if cur.returncode == 0 and not is_stub(cur.stdout.strip()):
+        log("apply 2/5: publish the restore point")
         pre = aws("lambda", "publish-version", "--function-name", fn, "--description",
                   f"restore point before {os.environ.get('GITHUB_SHA', 'local')[:7]} (run {os.environ.get('GITHUB_RUN_ID', 'local')})",
                   "--query", "Version", "--output", "text", region=region).stdout.strip()
+    else:
+        log("apply 2/5: no shipped release (no function, or it holds the stub): no restore point")
     _output("pre_deploy_version", pre)
     _output("first_release", "false" if pre else "true")
     name = _change_set_name()
     cs = json.loads(aws("cloudformation", "describe-change-set", "--stack-name", stack, "--change-set-name", name, region=region, check=False).stdout or "{}")
     if cs.get("Status") == "CREATE_COMPLETE":
+        log("apply 3/5: execute the change set and wait for the stack")
         aws("cloudformation", "execute-change-set", "--stack-name", stack, "--change-set-name", name, region=region)
-        waiter = "stack-create-complete" if cs.get("ChangeSetType") == "CREATE" else "stack-update-complete"
-        aws("cloudformation", "wait", waiter, "--stack-name", stack, region=region)
+        wait_stack(env)
     else:
-        print("no stack changes to apply")
+        log("apply 3/5: no stack changes to apply")
     zip_path = os.environ.get("PACKAGE_ZIP", "")
     if not zip_path or not os.path.exists(zip_path):
         raise SystemExit("PACKAGE_ZIP is not set or missing: build it with PACKAGE_ONLY=<path> deploy.sh")
-    aws("lambda", "update-function-code", "--function-name", fn, "--zip-file", f"fileb://{zip_path}", "--output", "text", "--query", "FunctionArn", region=region)
-    aws("lambda", "wait", "function-updated-v2", "--function-name", fn, region=region)
+    log(f"apply 4/5: ship the package ({os.path.getsize(zip_path)} bytes)")
+    wait_function(env)  # the stack's own create or update must have settled before code is written
+    aws("lambda", "update-function-code", "--function-name", fn, "--zip-file", f"fileb://{zip_path}", "--output", "text", "--query", "FunctionArn",
+        region=region, timeout=600, read_timeout=300)
+    log("apply 5/5: wait for the new code to be active")
+    wait_function(env)
     return 0
 
 
@@ -192,7 +271,7 @@ def health(env) -> str:
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "out.json")
         r = aws("lambda", "invoke", "--function-name", env["FUNCTION_NAME"], "--payload", json.dumps(health_event(deploy_role)),
-                "--cli-binary-format", "raw-in-base64-out", out, region=env["AWS_REGION"], check=False)
+                "--cli-binary-format", "raw-in-base64-out", out, region=env["AWS_REGION"], check=False, timeout=90)
         if r.returncode != 0:
             return "health read could not be made: " + r.stderr.strip()[:200]
         try:
