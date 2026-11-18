@@ -72,6 +72,13 @@ cd "${BUILD_DIR}"
 zip -r "${ZIP_FILE}" . -x '*.pyc' '__pycache__/*' --quiet
 log "Package size: $(du -h "${ZIP_FILE}" | cut -f1)"
 
+# N6F: a target that deploys through its stack (scripts/target_ops.py) wants the package and nothing else.
+if [ -n "${PACKAGE_ONLY:-}" ]; then
+  cp "${ZIP_FILE}" "${PACKAGE_ONLY}"
+  log "Package written to ${PACKAGE_ONLY}; nothing deployed (PACKAGE_ONLY)"
+  exit 0
+fi
+
 # --- Role ARN ---
 log "Using role: ${ROLE_ARN}"
 
@@ -142,6 +149,15 @@ aws lambda wait function-updated-v2 \
     --region "${REGION}"
 
 # --- Function URL ---
+# N6F (F-10): only a public edge has an address. DOOR_MODE unset or unknown reads as public, the strictest case,
+# so io's deployment (DOOR_MODE=public in its settings) behaves exactly as before; an internal deployment gets
+# no Function URL and no public invoke permission from this script.
+if [ "${DOOR_MODE:-public}" = "internal" ]; then
+    log "Internal door: no Function URL and no public permission created"
+    log "Deployment complete: ${FUNCTION_NAME}"
+    rm -rf "${BUILD_DIR}" "${ZIP_FILE}"
+    exit 0
+fi
 if ! aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --region "${REGION}" >/dev/null 2>&1; then
     log "Creating Function URL..."
     aws lambda create-function-url-config \

@@ -24,20 +24,38 @@ Parameters:
     Description: >-
       "true" creates a public Function URL (auth NONE) and its public invoke permission.
       "false" creates neither, so the function is reachable only through IAM.
+  SurfaceName:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9._-]{1,64}$"
+    ConstraintDescription: SURFACE_NAME is required by every door; letters, digits, dot, underscore and hyphen only.
+    Description: Surface and connector name this deployment serves (SURFACE_NAME). Required; the function refuses to start without it.
   InternalInvokerRole:
     Type: String
     Default: ""
-    Description: Role ARN the internal door answers (INTERNAL_INVOKER_ROLE); required when PublicEdge is false.
+    AllowedPattern: "^$|^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$"
+    ConstraintDescription: One role ARN, or empty. A wildcard is refused.
+    Description: Role ARN the internal door answers (INTERNAL_INVOKER_ROLE); required when PublicEdge is false. Names a caller to the function; it grants nothing unless InvokerGrant is true.
+  InvokerGrant:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: >-
+      "true" adds the resource-policy grant that lets InternalInvokerRole invoke the function. "false" (default) names
+      the role to the function and grants nobody, so no invoker is admitted at the resource policy.
   InternalDeployRole:
     Type: String
     Default: ""
+    AllowedPattern: "^$|^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$"
+    ConstraintDescription: One role ARN, or empty. A wildcard is refused.
     Description: Role ARN answered the one health read and nothing else (INTERNAL_DEPLOY_ROLE); optional.
   CodeS3Bucket:
     Type: String
-    Description: Bucket holding the function package.
+    Default: ""
+    Description: Bucket holding the function package. Empty = the function is made with a refusing stub and the deploy path ships the real package with lambda:UpdateFunctionCode.
   CodeS3Key:
     Type: String
-    Description: Key of the function package zip.
+    Default: ""
+    Description: Key of the function package zip (used only with CodeS3Bucket).
   CodeS3ObjectVersion:
     Type: String
     Default: ""
@@ -70,7 +88,8 @@ Parameters:
 Conditions:
   HasFinanceFunction: !Not [!Equals [!Ref FinanceReadFunction, ""]]
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
-  GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]]]
+  GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]], !Equals [!Ref InvokerGrant, "true"]]
+  HasCodeBucket: !Not [!Equals [!Ref CodeS3Bucket, ""]]
   GrantsDeployer: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalDeployRole, ""]]]
   HasCodeVersion: !Not [!Equals [!Ref CodeS3ObjectVersion, ""]]
 
@@ -199,13 +218,21 @@ Resources:
       MemorySize: 512
       Timeout: 30
       Code:
-        S3Bucket: !Ref CodeS3Bucket
-        S3Key: !Ref CodeS3Key
-        S3ObjectVersion: !If [HasCodeVersion, !Ref CodeS3ObjectVersion, !Ref "AWS::NoValue"]
+        # With no bucket the function is made with a stub that answers nothing; the deploy path then ships the
+        # package with lambda:UpdateFunctionCode (the permission a deploy role already holds). The stub's text
+        # never changes, so a later stack update does not touch the shipped code.
+        S3Bucket: !If [HasCodeBucket, !Ref CodeS3Bucket, !Ref "AWS::NoValue"]
+        S3Key: !If [HasCodeBucket, !Ref CodeS3Key, !Ref "AWS::NoValue"]
+        S3ObjectVersion: !If [HasCodeBucket, !If [HasCodeVersion, !Ref CodeS3ObjectVersion, !Ref "AWS::NoValue"], !Ref "AWS::NoValue"]
+        ZipFile: !If
+          - HasCodeBucket
+          - !Ref "AWS::NoValue"
+          - "def lambda_handler(event, context):\n    return {\"statusCode\": 503, \"body\": \"not deployed\"}\n"
       Environment:
         Variables:
           TABLE_NAME: !Ref FlightsTable
           RECORDS_TABLE_NAME: !Ref RecordsTable
+          SURFACE_NAME: !Ref SurfaceName
           MCP_TRANSPORT: !Ref McpTransport
           DOOR_MODE: !If [IsPublicEdge, public, internal]
           INTERNAL_INVOKER_ROLE: !Ref InternalInvokerRole
