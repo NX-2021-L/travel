@@ -33,8 +33,15 @@ FUNCTION = os.environ.get("FUNCTION_NAME", "")
 REGION = os.environ.get("AWS_REGION", "")
 
 
-def aws(*args, check=True):
-    r = subprocess.run(["aws", *args, "--region", REGION], capture_output=True, text=True)
+def aws(*args, check=True, timeout=600):
+    # N6F: a hang is never silent and never unbounded: no pager, connect/read timeouts, a hard wall-clock limit.
+    print(f"[release_ops] aws {' '.join(a for a in args[:2] if not a.startswith('-'))} (limit {timeout}s)", flush=True)
+    try:
+        r = subprocess.run(["aws", "--no-cli-pager", "--cli-connect-timeout", "15", "--cli-read-timeout", "300", *args, "--region", REGION],
+                           capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        print(f"[release_ops] TIMEOUT: aws {args[0]} {args[1]} did not finish in {timeout}s", file=sys.stderr, flush=True)
+        raise SystemExit(124)
     if check and r.returncode != 0:
         print(r.stderr, file=sys.stderr)
         raise SystemExit(r.returncode)

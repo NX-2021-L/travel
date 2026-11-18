@@ -175,10 +175,13 @@ jobs:
     needs: release
     if: github.event_name == 'push' || inputs.action != 'rollback'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
       pre_deploy_version: ${{ steps.apply.outputs.pre_deploy_version }}
       first_release: ${{ steps.apply.outputs.first_release }}
     env:
+      PYTHONUNBUFFERED: "1"
+      AWS_PAGER: ""
       FORCE_VERIFY_FAIL: ${{ inputs.force_nana_verify_fail && 'true' || 'false' }}
       DRILL_EXPECT_EXTRA_MODULE: ${{ inputs.drill_withhold_module }}
       TARGET_ACCOUNT_ID: ${{ vars.NANA_AWS_ACCOUNT_ID }}
@@ -214,20 +217,24 @@ jobs:
             --extra-index-url "https://aws:${TOKEN}@${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/pypi/${CODEARTIFACT_REPOSITORY}/simple/" --quiet
 
       - name: Build the package (the same build io's deployment ships; nothing is deployed here)
+        timeout-minutes: 15
         env:
           PACKAGE_ZIP: ${{ runner.temp }}/travel-mcp-package.zip
         run: PACKAGE_ONLY="${PACKAGE_ZIP}" bash backend/lambda/travel_mcp/deploy.sh
 
       - name: Plan (read-only; her change set is shown and not executed)
+        timeout-minutes: 10
         run: python3 scripts/target_ops.py plan
 
       - name: Apply - publish restore point, execute the plan, ship the package
+        timeout-minutes: 25
         id: apply
         env:
           PACKAGE_ZIP: ${{ runner.temp }}/travel-mcp-package.zip
         run: python3 scripts/target_ops.py apply
 
       - name: Verify (read-only; the health read, no address, no public permission, the deployed package)
+        timeout-minutes: 10
         id: verify
         continue-on-error: true
         run: |
@@ -237,6 +244,7 @@ jobs:
           fi
 
       - name: Undo - restore her previous release (automatic, on verify failure)
+        timeout-minutes: 15
         id: undo
         if: steps.verify.outcome == 'failure'
         run: |
@@ -259,6 +267,7 @@ jobs:
 
   undo-io:
     # A failed check on hers returns io's too, under io's own role, afresh (NQ-13).
+    timeout-minutes: 20
     needs: [release, nana]
     if: always() && needs.release.result == 'success' && needs.nana.result == 'failure' && needs.release.outputs.pre_deploy_version != ''
     runs-on: ubuntu-latest
@@ -307,6 +316,7 @@ jobs:
 
   rollback-nana:
     # The same manual way back for her deployment, under her own role (blank version = her previous release).
+    timeout-minutes: 20
     needs: rollback
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'
     runs-on: ubuntu-latest
