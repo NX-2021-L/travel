@@ -219,3 +219,34 @@ def test_her_jobs_are_bounded_and_unbuffered_and_io_job_is_untouched():
     assert nana["timeout-minutes"] and nana["env"]["PYTHONUNBUFFERED"] == "1" and nana["env"]["AWS_PAGER"] == ""
     assert all("timeout-minutes" in s for s in nana["steps"] if s["name"].split(" ")[0] in ("Build", "Plan", "Apply", "Verify", "Undo"))
     assert "timeout-minutes" not in WF["jobs"]["release"]
+
+
+# ---- run 44382258007: the package check must start the internal door ----
+def test_package_check_carries_the_invoker_and_deploy_role_arns_built_at_run_time():
+    e = to.package_check_env(ENV, {"X": "1"})
+    assert e["X"] == "1"
+    assert e["INTERNAL_INVOKER_ROLE"] == f"arn:aws:iam::{ACCT}:role/{TARGET['INTERNAL_INVOKER_ROLE_NAME']}"
+    assert e["INTERNAL_DEPLOY_ROLE"] == f"arn:aws:iam::{ACCT}:role/{TARGET['DEPLOY_ROLE_NAME']}"
+    p = {x["ParameterKey"]: x["ParameterValue"] for x in to.stack_parameters(ENV)}  # the same ARNs the function is given
+    assert (e["INTERNAL_INVOKER_ROLE"], e["INTERNAL_DEPLOY_ROLE"]) == (p["InternalInvokerRole"], p["InternalDeployRole"])
+    assert p["InvokerGrant"] == "false"  # named, granted nothing
+
+
+def test_verify_runs_the_package_check_under_that_environment():
+    src = (ROOT / "scripts/target_ops.py").read_text()
+    assert "verify_deployed_package.py" in src and "env=package_check_env(env, dict(os.environ))" in src
+
+
+def test_the_door_starts_with_the_package_check_environment():
+    import door
+    e = to.package_check_env(ENV, {"DOOR_MODE": "internal"})
+    assert door.load(e)[0] == "internal"
+    with pytest.raises(door.DoorError):
+        door.load({"DOOR_MODE": "internal"})  # what run 44382258007 had
+
+
+def test_a_function_error_is_not_a_health_answer(monkeypatch):
+    class R:
+        returncode, stdout, stderr = 0, "Unhandled\n", ""
+    monkeypatch.setattr(to, "aws", lambda *a, **k: R())
+    assert "function failed" in to.health(ENV)
