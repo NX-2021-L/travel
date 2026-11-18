@@ -40,7 +40,7 @@ SCANNED = (
                       "requirements.txt", "caps.json", "permission_manifest.json")]
     + sorted((ROOT / ".github" / "workflows").glob("*.yml"))
     + [ROOT / "scripts" / n for n in ("release_ops.py", "verify_deployed_package.py", "emit_caps.py",
-                                      "load_deployment_settings.py", "mcp_post_deploy_probe.sh")]
+                                      "load_deployment_settings.py", "mcp_post_deploy_probe.sh", "target_ops.py")]
 )
 
 # (file name, literal) pairs allowed; see the module docstring. FLY-TSK-031-0A settled every entry that stood

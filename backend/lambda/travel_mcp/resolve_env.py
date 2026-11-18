@@ -23,6 +23,9 @@ KEYS = list(contract.SETTINGS)
 # when one is absent, so a missing one stops the run before apply.
 DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEARTIFACT_OWNER",
                    "CODEARTIFACT_REGION", "CODEARTIFACT_REPOSITORY", "PROBE_MCP_URL", "PROBE_SIGNIN_URL")
+# N6F (F-10): an internal deployment has no address to probe; its check is the health read. The two probe
+# addresses are required only when the door is public, and a missing or unknown door reads as public.
+PUBLIC_ONLY_DEPLOY_SETTINGS = ("PROBE_MCP_URL", "PROBE_SIGNIN_URL")
 
 # FLY-TSK-022: retired by the edge adoption. Stripped from the function env on every deploy so a
 # stale confidential-client secret or static key can never survive the merge with CURRENT_ENV.
@@ -62,7 +65,9 @@ def guard(env: dict) -> str:
 
 def missing_deploy_settings(environ=None) -> list:
     environ = os.environ if environ is None else environ
-    return [k for k in DEPLOY_SETTINGS if not (environ.get(k) or "").strip()]
+    internal = (environ.get("DOOR_MODE") or "").strip() == "internal"
+    return [k for k in DEPLOY_SETTINGS
+            if not (internal and k in PUBLIC_ONLY_DEPLOY_SETTINGS) and not (environ.get(k) or "").strip()]
 
 
 def diff_env(current: dict, resolved: dict) -> list:
