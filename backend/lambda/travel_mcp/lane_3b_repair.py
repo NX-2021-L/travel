@@ -41,7 +41,7 @@ import trip_engine as te
 
 DEFAULT_LIMIT = 50
 _RECORD_KINDS = ("lodging", "car_rental", "drive")
-_HOME_KWARGS = {}  # transport / credential / endpoint for home_service.read_home; a deployment supplies none
+_HOME_KWARGS = {}  # invoker / function for home_service.read_home; a deployment supplies none
 
 
 def _lf():

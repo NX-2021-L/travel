@@ -32,7 +32,7 @@ IO.update({"COGNITO_USER_POOL_ID": "pool-io", "COGNITO_CLIENT_ID": "client-io", 
 # write groups, a second issuer's allow-list, a credential, no public URL and no origins.
 NANA = {
     "TABLE_NAME": "nana-flights-x", "RECORDS_TABLE_NAME": "nana-records-x", "SURFACE_NAME": "nana-travel-x",
-    "FINANCE_READ_FUNCTION": "https://finance.nana.invalid/", "FINANCE_READ_CREDENTIAL_SECRET": "nana/finance-key",
+    "FINANCE_READ_FUNCTION": "arn:aws:lambda:eu-central-1:000000000000:function:nana-finance",
     "COGNITO_USER_POOL_ID": "eu-central-1_NANAPOOL", "COGNITO_CLIENT_ID": "nana-client",
     "COGNITO_REGION": "eu-central-1", "COGNITO_ALLOWED_SUBS": "nana-a,nana-b", "IOGRAPH_ALLOWED_SUBS": "nana-c",
     "TRAVEL_WRITE_GROUPS": "nana-writers,nana-admins", "DOOR_MODE": "internal",

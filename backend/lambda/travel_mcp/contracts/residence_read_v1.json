@@ -1,0 +1,27 @@
+{
+  "contract": "finance.residence_periods.v1",
+  "note": "Synthetic values only. Pinned byte-for-byte by travel.",
+  "event": {
+    "internal": "finance.residence_periods.v1",
+    "args": {"from": "2000-01-01", "to": "2000-12-31"}
+  },
+  "reply": {
+    "ok": true,
+    "result": {
+      "periods": [
+        {
+          "residence_uid": "resd_sample",
+          "effective_from": "2000-01-01",
+          "end_status": "ongoing",
+          "tenure": "rented",
+          "state": "XX",
+          "country": "ZZ"
+        }
+      ]
+    }
+  },
+  "error_reply": {
+    "ok": false,
+    "error": {"code": "invalid_args", "message": "'from' must be an ISO date YYYY-MM-DD"}
+  }
+}

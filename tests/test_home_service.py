@@ -1,11 +1,10 @@
-"""A-8 (FLY-TSK-029-0C): the call to finance and its three failure behaviours, against a fixture.
+"""A-8 (FLY-TSK-029-0C, FLY-TSK-078): the direct call to finance and its three failure behaviours, against a fixture.
 
-Offline: the HTTP layer is a stub; no network, no AWS, no real finance call. home_service imports only
-contract (stdlib otherwise), so these run without io_kit_mcp_edge.
+Offline: the Lambda layer is a stub; no network, no AWS, no real finance call. home_service imports only
+contract and settings (stdlib otherwise), so these run without io_kit_mcp_edge.
 """
 import inspect
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -17,46 +16,39 @@ D = ROOT / "backend" / "lambda" / "travel_mcp"
 sys.path.insert(0, str(D))
 import contract as c  # noqa: E402
 import home_service as hs  # noqa: E402
+import settings as st  # noqa: E402
 
 FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "finance_residence_periods_fixture.json").read_text())
-URL = "https://finance.example.test/"
-SECRET = "test-bearer-do-not-log"
-
-
-@pytest.fixture(autouse=True)
-def _hermetic_secret_setting(monkeypatch):
-    """A deployment's own FINANCE_READ_CREDENTIAL_SECRET (CI loads deploy/settings.env) must never reach these tests."""
-    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
-    hs._secret_cache.clear()
-
-
-def envelope(inner, is_error=False):
-    return json.dumps({"jsonrpc": "2.0", "id": 1,
-                       "result": {"content": [{"type": "text", "text": json.dumps(inner)}], "isError": is_error}}).encode()
+PINNED = D / "contracts" / "residence_read_v1.json"
+CONTRACT = json.loads(PINNED.read_text())
+FN = "finance-fn-test"
 
 
 class Stub:
-    def __init__(self, status=200, body=None, exc=None, seq=None):
-        self.calls, self.status, self.body, self.exc, self.seq = [], status, body, exc, seq
+    """The invoker: records (function, event, timeout) and returns (function_error, reply bytes)."""
 
-    def __call__(self, url, headers, body, timeout):
-        self.calls.append((url, headers, json.loads(body), timeout))
+    def __init__(self, body=b"", function_error=None, exc=None, seq=None):
+        self.calls, self.body, self.function_error, self.exc, self.seq = [], body, function_error, exc, seq
+
+    def __call__(self, function, payload, timeout):
+        self.calls.append((function, json.loads(payload), timeout))
         if self.seq:
             return self.seq.pop(0)
         if self.exc:
             raise self.exc
-        return self.status, self.body
+        return self.function_error, self.body
+
+
+def reply(periods):
+    return json.dumps({"ok": True, "result": {"periods": periods}}).encode()
 
 
 def ok(periods=None):
-    inner = json.loads(json.dumps(FIXTURE))
-    if periods is not None:
-        inner["result"]["periods"] = periods
-    return Stub(200, envelope(inner))
+    return Stub(reply(FIXTURE["result"]["periods"] if periods is None else periods))
 
 
 def read(stub, a, b):
-    return hs.read_home(a, b, transport=stub, credential=lambda: SECRET, endpoint=URL)
+    return hs.read_home(a, b, invoker=stub, function=FN)
 
 
 def refusal(stub, a="2021-02-01", b="2021-03-01"):
@@ -65,44 +57,121 @@ def refusal(stub, a="2021-02-01", b="2021-03-01"):
     return e.value
 
 
+# ---------------------------------------------------------------- FLY-TSK-078: the pinned contract
+
+def test_pinned_fixture_is_byte_identical_to_finances():
+    """The fixture is finance's file, copied byte for byte; its sha256 is pinned so an edit here is loud."""
+    import hashlib
+    assert hashlib.sha256(PINNED.read_bytes()).hexdigest() == "74f036fb3963d195d9a9f6cb04319ecdd754bc047011e2f71342df60698664d8"
+
+
+def test_request_builder_produces_the_fixtures_event():
+    ev = CONTRACT["event"]
+    assert hs._event(ev["args"]["from"], ev["args"]["to"]) == ev
+    s = Stub(json.dumps(CONTRACT["reply"]).encode())
+    read(s, ev["args"]["from"], ev["args"]["to"])
+    assert s.calls[0][1] == ev and "requestContext" not in s.calls[0][1]
+
+
+def test_fixture_reply_parses():
+    r = read(Stub(json.dumps(CONTRACT["reply"]).encode()), "2000-06-01", "2000-06-30")
+    assert len(r.periods) == 1 and r.periods[0].residence_uid == "resd_sample" and r.periods[0].end_status == "ongoing"
+    assert r.flags == ()
+
+
+def test_fixture_error_reply_is_unavailable_and_an_alert():
+    e = refusal(Stub(json.dumps(CONTRACT["error_reply"]).encode()))
+    assert e.code == "HOME_UNAVAILABLE" and e.cause == "invalid_args" and e.alert
+
+
+def test_invoke_goes_through_boto_with_request_response(monkeypatch):
+    seen = {}
+
+    class Body:
+        def read(self):
+            return reply([])
+
+    class Client:
+        def invoke(self, **kw):
+            seen.update(kw)
+            return {"StatusCode": 200, "Payload": Body()}
+
+    monkeypatch.setattr(hs, "_lambda_client", Client())
+    assert hs._boto_invoker(FN, b"{}", 5.0) == (None, reply([]))
+    assert seen == {"FunctionName": FN, "InvocationType": "RequestResponse", "Payload": b"{}"}
+    assert not hasattr(hs, "urllib") and "urllib" not in (D / "home_service.py").read_text()
+
+
+@pytest.mark.parametrize("value,good", [
+    ("finance-mcp", True), ("arn:aws:lambda:us-west-2:123456789012:function:finance-mcp", True),
+    ("arn:aws:lambda:us-west-2:123456789012:function:finance-mcp:live", True),
+    ("https://abc.lambda-url.us-west-2.on.aws/", False), ("http://x", False), ("", False), ("a b", False),
+    ("arn:aws:s3:::bucket", False), ("finance/mcp", False), ("x" * 65, False),
+])
+def test_finance_read_function_must_be_a_function_name_or_arn(monkeypatch, value, good):
+    assert (st.finance_function_problem(value) == "") is good
+    monkeypatch.setenv("FINANCE_READ_FUNCTION", value)
+    if good:
+        s = ok()
+        hs.read_home("2021-02-01", "2021-03-01", invoker=s)
+        assert s.calls[0][0] == value
+    else:
+        s = ok()
+        with pytest.raises(hs.HomeError) as e:
+            hs.read_home("2021-02-01", "2021-03-01", invoker=s)
+        assert e.value.cause == "config" and not s.calls
+        assert not value or value not in str(e.value)
+
+
+def test_bearer_and_secret_path_are_gone():
+    src = (D / "home_service.py").read_text().lower()
+    for gone in ("bearer", "secretsmanager", "authorization", "get_secret_value", "x-agent-session", "https://"):
+        assert gone not in src, gone
+    assert "FINANCE_READ_CREDENTIAL_SECRET" not in c.SETTINGS and not hasattr(hs, "SECRET_SETTING")
+    assert c.SETTINGS["FINANCE_READ_FUNCTION"]["required"] == "public"  # required-ness unchanged
+
+
+def test_the_deploy_strips_the_retired_secret_setting_and_refuses_a_url():
+    import resolve_env
+    live = {"FINANCE_READ_CREDENTIAL": "x", "FINANCE_READ_CREDENTIAL_SECRET": "some/secret/name", "TABLE_NAME": "t"}
+    out = resolve_env.resolve(live, {})
+    assert "FINANCE_READ_CREDENTIAL" not in out and "FINANCE_READ_CREDENTIAL_SECRET" not in out
+    assert "function name or ARN" in resolve_env.guard({"FINANCE_READ_FUNCTION": "https://x.example/"})
+
+
 # ---------------------------------------------------------------- clause 1: the trips read sends no home
 
 def test_signature_takes_no_home_and_no_tool():
     params = inspect.signature(hs.read_home).parameters
     assert [n for n, p in params.items() if p.kind is p.POSITIONAL_OR_KEYWORD] == ["date_from", "date_to"]
     assert not [n for n in params if any(w in n.lower() for w in ("home", "residence", "period", "place", "tool", "name", "method"))]
-    for n in ("transport", "credential", "endpoint"):
+    for n in ("invoker", "function"):
         assert params[n].kind is inspect.Parameter.KEYWORD_ONLY
     with pytest.raises(TypeError):
-        hs.read_home("2021-02-01", "2021-03-01", home="res-a", transport=ok(), credential=lambda: SECRET, endpoint=URL)
+        hs.read_home("2021-02-01", "2021-03-01", home="res-a", invoker=ok(), function=FN)
 
 
-def test_request_carries_only_the_window_and_the_fixed_envelope():
+def test_request_carries_only_the_window_and_the_fixed_event():
     s = ok()
     read(s, "2021-02-01", "2021-03-01")
-    url, headers, body, _ = s.calls[0]
-    assert url == URL
-    assert body == {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": "finance_residence_periods",
-                               "arguments": {"from": "2021-02-01", "to": "2021-03-01"}}}
-    assert headers["Authorization"] == f"Bearer {SECRET}" and headers["X-Agent-Session"] == "io-travel"
+    function, event, timeout = s.calls[0]
+    assert function == FN and timeout == hs.TIMEOUT_SECONDS
+    assert event == {"internal": "finance.residence_periods.v1", "args": {"from": "2021-02-01", "to": "2021-03-01"}}
 
 
 # ---------------------------------------------------------------- clause 5: read scoping
 
-def test_only_the_residence_tool_can_be_sent():
-    assert hs.RESIDENCE_TOOL == "finance_residence_periods"
-    assert inspect.signature(hs._request_body).parameters.keys() == {"date_from", "date_to"}
+def test_only_the_residence_read_can_be_sent():
+    assert hs.INTERNAL_CONTRACT == "finance.residence_periods.v1"
+    assert inspect.signature(hs._event).parameters.keys() == {"date_from", "date_to"}
     src = (D / "home_service.py").read_text()
     for forbidden in ("finance_query", "finance.query", "record_residence", "close_residence", "create_residence"):
         assert forbidden not in src
-    # whatever the dates, the one tool is sent, with exactly the two arguments
     for a, b in [("2021-02-01", "2021-02-02"), ("2024-03-01", "2024-03-09")]:
         s = ok()
         read(s, a, b)
-        assert s.calls[0][2]["params"]["name"] == hs.RESIDENCE_TOOL
-        assert set(s.calls[0][2]["params"]["arguments"]) == {"from", "to"}
-    # no other public callable can talk to finance: the entry point is the only public function
+        assert s.calls[0][1]["internal"] == hs.INTERNAL_CONTRACT
+        assert set(s.calls[0][1]["args"]) == {"from", "to"} and set(s.calls[0][1]) == {"internal", "args"}
     public = [n for n, o in vars(hs).items() if inspect.isfunction(o) and not n.startswith("_") and o.__module__ == "home_service"]
     assert public == ["read_home"]
 
@@ -116,86 +185,54 @@ def test_projection_drops_everything_but_the_narrow_fields():
     assert "PLACEHOLDER" not in repr(r)
 
 
-def test_credential_is_never_in_errors_or_reprs():
-    for stub in (Stub(401, b"nope"), Stub(exc=OSError(f"connect {SECRET}")), ok([])):
+def test_function_name_is_never_in_errors():
+    for stub in (Stub(exc=OSError(f"connect {FN}")), Stub(function_error="Unhandled"), ok([])):
         e = refusal(stub)
-        assert SECRET not in str(e) and SECRET not in repr(e) and SECRET not in e.cause
+        assert FN not in str(e) and FN not in repr(e) and FN not in e.cause
 
 
-def test_credential_setting_is_declared_and_absent_refuses(monkeypatch):
-    """FLY-TSK-049: the credential setting names a secret (optional, never a value); unset, the read refuses."""
-    assert c.SETTINGS["FINANCE_READ_CREDENTIAL_SECRET"]["required"] is False
-    assert "FINANCE_READ_CREDENTIAL" not in c.SETTINGS and not hasattr(hs, "CREDENTIAL_SETTING")
-    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.delenv("FINANCE_READ_CREDENTIAL_SECRET", raising=False)
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL", SECRET)  # a stray literal is never used
+def test_function_defaults_to_declared_setting(monkeypatch):
+    monkeypatch.setenv(hs.FUNCTION_SETTING, "finance-from-env")
     s = ok()
+    hs.read_home("2021-02-01", "2021-03-01", invoker=s)
+    assert s.calls[0][0] == "finance-from-env"
+    monkeypatch.delenv(hs.FUNCTION_SETTING)
     with pytest.raises(hs.HomeError) as e:
-        hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
-    assert "FINANCE_READ_CREDENTIAL_SECRET" in str(e.value) and SECRET not in str(e.value)
-
-
-def test_default_credential_and_session_come_from_settings(monkeypatch):
-    """With the setting present a live read can succeed; the session header is the deployment's SURFACE_NAME."""
-    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL_SECRET", "some/secret/name")
-    hs._secret_cache.clear()
-    monkeypatch.setattr(hs, "_secrets_client", lambda: FakeSM([SECRET]))
-    monkeypatch.setenv("SURFACE_NAME", "some-other-surface")
-    s = ok()
-    hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    headers = s.calls[0][1]
-    assert headers["Authorization"] == f"Bearer {SECRET}" and headers["X-Agent-Session"] == "some-other-surface"
-    monkeypatch.delenv("SURFACE_NAME")
-    with pytest.raises(hs.HomeError) as e:
-        hs.read_home("2021-02-01", "2021-03-01", transport=ok())
-    assert e.value.cause == "config" and "SURFACE_NAME" in str(e.value)
-
-
-def test_endpoint_defaults_to_declared_setting(monkeypatch):
-    monkeypatch.setenv(hs.ENDPOINT_SETTING, URL)
-    s = ok()
-    hs.read_home("2021-02-01", "2021-03-01", transport=s, credential=lambda: SECRET)
-    assert s.calls[0][0] == URL
-    monkeypatch.setenv(hs.ENDPOINT_SETTING, "arn:aws:lambda:us-west-2:1:function:finance-mcp")  # direct invoke is refused by finance
-    with pytest.raises(hs.HomeError) as e:
-        hs.read_home("2021-02-01", "2021-03-01", transport=ok(), credential=lambda: SECRET)
+        hs.read_home("2021-02-01", "2021-03-01", invoker=ok())
     assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config"
 
 
 # ---------------------------------------------------------------- clause 2: finance unreachable -> HOME_UNAVAILABLE
 # The finding's s6 rows 1-10 and 14.
 
-def tool_err(code):
-    return Stub(200, envelope({"success": False, "tool": "finance.residence_periods", "error": {"code": code, "message": "m"}}, True))
+def reply_err(code):
+    return Stub(json.dumps({"ok": False, "error": {"code": code, "message": "m"}}).encode())
 
 
 UNAVAILABLE = {
-    "1_transport_oserror": lambda: Stub(exc=OSError("dns")),
-    "1_timeout": lambda: Stub(exc=TimeoutError("t")),
-    "1_http_500": lambda: Stub(500, b""),
-    "1_http_502": lambda: Stub(502, b"bad gateway"),
-    "1_http_503": lambda: Stub(503, b""),
-    "2_http_429": lambda: Stub(429, b""),
-    "3_http_401": lambda: Stub(401, b"unauthorized"),
-    "4_http_403": lambda: Stub(403, b"forbidden"),
-    "5_http_400_parse": lambda: Stub(400, b'{"jsonrpc":"2.0","error":{"code":-32700}}'),
-    "6_http_400_invalid_request": lambda: Stub(400, b'{"error":{"code":-32600}}'),
-    "6_http_405": lambda: Stub(405, b""),
-    "7_unknown_tool": lambda: tool_err("unknown_tool"),
-    "8_invalid_input": lambda: tool_err("invalid_input"),
-    "9_storage_conflict_twice": lambda: tool_err("storage_conflict"),
-    "10_backend_error": lambda: tool_err("backend_error"),
-    "10_jsonrpc_minus_32603": lambda: Stub(200, json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32603}}).encode()),
-    "10_http_500_body": lambda: Stub(500, b'{"error":"x"}'),
-    "10_unrecognised_error_code": lambda: tool_err("something_new"),
-    "14_not_json": lambda: Stub(200, b"<html>"),
-    "14_envelope_empty_content": lambda: Stub(200, json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [], "isError": False}}).encode()),
-    "14_inner_not_json": lambda: Stub(200, json.dumps({"result": {"content": [{"type": "text", "text": "x"}]}}).encode()),
-    "14_success_missing": lambda: Stub(200, envelope({"tool": "t", "result": {"periods": []}})),
-    "14_periods_not_list": lambda: Stub(200, envelope({"success": True, "result": {"periods": {}}})),
-    "14_result_missing": lambda: Stub(200, envelope({"success": True})),
+    # FunctionError or an ok:false reply
+    "function_error": lambda: Stub(b'{"errorMessage":"boom"}', function_error="Unhandled"),
+    "function_error_handled": lambda: Stub(b"{}", function_error="Handled"),
+    "ok_false_invalid_args": lambda: reply_err("invalid_args"),
+    "ok_false_other": lambda: reply_err("backend_error"),
+    "ok_false_new_code": lambda: reply_err("something_new"),
+    "ok_false_no_error": lambda: Stub(b'{"ok": false}'),
+    # timeout or unavailable
+    "transport_oserror": lambda: Stub(exc=OSError("dns")),
+    "timeout": lambda: Stub(exc=TimeoutError("t")),
+    "throttled": lambda: Stub(exc=RuntimeError("TooManyRequestsException")),
+    "access_denied": lambda: Stub(exc=RuntimeError("AccessDeniedException")),
+    "function_missing": lambda: Stub(exc=RuntimeError("ResourceNotFoundException")),
+    # malformed reply
+    "not_json": lambda: Stub(b"<html>"),
+    "empty": lambda: Stub(b""),
+    "json_not_object": lambda: Stub(b"[1]"),
+    "ok_missing": lambda: Stub(b'{"result": {"periods": []}}'),
+    "ok_not_bool": lambda: Stub(b'{"ok": "yes", "result": {"periods": []}}'),
+    "result_missing": lambda: Stub(b'{"ok": true}'),
+    "result_not_object": lambda: Stub(b'{"ok": true, "result": []}'),
+    "periods_not_list": lambda: Stub(b'{"ok": true, "result": {"periods": {}}}'),
+    "periods_missing": lambda: Stub(b'{"ok": true, "result": {}}'),
 }
 
 
@@ -233,19 +270,16 @@ def test_14_period_not_object():
     assert refusal(ok(["x"])).code == "HOME_UNAVAILABLE"
 
 
-def test_9_storage_conflict_retried_once_then_succeeds():
-    good = (200, envelope(FIXTURE))
-    conflict = (200, envelope({"success": False, "error": {"code": "storage_conflict"}}, True))
-    s = Stub(seq=[conflict, good])
-    assert read(s, "2021-02-01", "2021-03-01").flags == () and len(s.calls) == 2
-    s = Stub(seq=[conflict, conflict])
-    assert refusal(s).code == "HOME_UNAVAILABLE" and len(s.calls) == 2
-
-
 def test_alerting_tags_distinguish_bugs_and_config_from_outages():
-    assert refusal(Stub(401, b"")).alert and refusal(Stub(403, b"")).alert and refusal(Stub(400, b"")).alert
-    assert refusal(tool_err("invalid_input")).alert
-    assert not refusal(Stub(503, b"")).alert and not refusal(Stub(429, b"")).alert and not refusal(tool_err("unknown_tool")).alert
+    assert refusal(reply_err("invalid_args")).alert
+    assert not refusal(Stub(exc=TimeoutError("t"))).alert and not refusal(reply_err("backend_error")).alert
+    assert not refusal(Stub(b"x", function_error="Unhandled")).alert
+
+
+def test_one_invoke_per_read_no_retry():
+    s = Stub(exc=TimeoutError("t"))
+    refusal(s)
+    assert len(s.calls) == 1
 
 
 def test_bad_window_is_a_caller_error_not_a_home_code():
@@ -352,78 +386,3 @@ def test_fixture_has_every_state_and_a_gap_and_no_address():
 
 def test_it_stays_out_of_the_lane_registry():
     assert "home_service" not in c.LANE_MODULES.values() and not hasattr(hs, "HANDLERS")
-
-
-# ---------------------------------------------------------------- FLY-TSK-049: credential from Secrets Manager
-class FakeSM:
-    def __init__(self, values=None, exc=None):
-        self.values, self.exc, self.calls = list(values or []), exc, []
-
-    def get_secret_value(self, SecretId):
-        self.calls.append(SecretId)
-        if self.exc:
-            raise self.exc
-        v = self.values.pop(0) if len(self.values) > 1 else self.values[0]
-        return {"SecretString": v} if isinstance(v, str) or v is None else v
-
-
-@pytest.fixture
-def secret_path(monkeypatch):
-    monkeypatch.setenv("FINANCE_READ_FUNCTION", URL)
-    monkeypatch.setenv("FINANCE_READ_CREDENTIAL_SECRET", "some/secret/name")
-    hs._secret_cache.clear()
-    fake = FakeSM(["secret-one"])
-    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
-    yield fake
-    hs._secret_cache.clear()
-
-
-def test_secret_setting_is_declared_optional():
-    assert c.SETTINGS["FINANCE_READ_CREDENTIAL_SECRET"]["required"] is False
-    assert hs.SECRET_SETTING == "FINANCE_READ_CREDENTIAL_SECRET"
-
-
-def test_secret_is_fetched_once_and_cached(secret_path):
-    s = ok()
-    hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert [x[1]["Authorization"] for x in s.calls] == ["Bearer secret-one"] * 2
-    assert secret_path.calls == ["some/secret/name"]  # fetched once for the life of the environment
-
-
-def test_auth_refusal_refetches_once_then_succeeds(secret_path, monkeypatch):
-    fake = FakeSM(["old-key", "rotated-key"])
-    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
-    good = ok()
-    s = Stub(seq=[(401, b"no"), good(URL, {}, b"{}", 1)[0:2]])
-    r = hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert r.periods and len(fake.calls) == 2
-    assert [x[1]["Authorization"] for x in s.calls] == ["Bearer old-key", "Bearer rotated-key"]
-
-
-def test_persistent_auth_refusal_refetches_only_once(secret_path):
-    s = Stub(401, b"no")
-    with pytest.raises(hs.HomeError) as e:
-        hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config"
-    assert len(s.calls) == 2 and len(secret_path.calls) == 2
-
-
-@pytest.mark.parametrize("fake", [FakeSM(exc=RuntimeError("AccessDenied some/secret/name secret-one")),
-                                  FakeSM([None]), FakeSM([""]), FakeSM([{"SecretBinary": b"x"}])])
-def test_unreadable_or_empty_secret_fails_closed_without_leaking(secret_path, monkeypatch, fake):
-    monkeypatch.setattr(hs, "_secrets_client", lambda: fake)
-    s = ok()
-    with pytest.raises(hs.HomeError) as e:
-        hs.read_home("2021-02-01", "2021-03-01", transport=s)
-    assert e.value.code == "HOME_UNAVAILABLE" and e.value.cause == "config" and not s.calls
-    assert "some/secret/name" not in str(e.value) and "secret-one" not in str(e.value)
-    assert e.value.__cause__ is None
-
-
-def test_the_deploy_strips_the_retired_literal_from_the_live_environment():
-    """FLY-TSK-049: resolve_env merges the live env, so the retired literal must be dropped explicitly."""
-    import resolve_env
-    live = {"FINANCE_READ_CREDENTIAL": "x", "FINANCE_READ_CREDENTIAL_SECRET": "some/secret/name", "TABLE_NAME": "t"}
-    out = resolve_env.resolve(live, {})
-    assert "FINANCE_READ_CREDENTIAL" not in out and out["FINANCE_READ_CREDENTIAL_SECRET"] == "some/secret/name"
