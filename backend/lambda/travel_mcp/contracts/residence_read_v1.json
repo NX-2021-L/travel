@@ -1,6 +1,6 @@
 {
   "contract": "finance.residence_periods.v1",
-  "note": "Synthetic values only. Pinned byte-for-byte by travel.",
+  "note": "Synthetic values only. Pinned byte-for-byte by travel and by finance (MOM-TSK-002-0I).",
   "event": {
     "internal": "finance.residence_periods.v1",
     "args": {"from": "2000-01-01", "to": "2000-12-31"}
@@ -23,5 +23,28 @@
   "error_reply": {
     "ok": false,
     "error": {"code": "invalid_args", "message": "'from' must be an ISO date YYYY-MM-DD"}
-  }
+  },
+  "caller": {
+    "person": "none: the event has no person field and the reply has no person key",
+    "session": "none: the event has no session field; no X-Agent-Session and no requestContext",
+    "identity": "the invoking execution role, admitted by finance's resource policy; finance records principal kind internal-door",
+    "city": "none: the reply carries no city, only state and country"
+  },
+  "failures": [
+    {"name": "bad_date", "event": {"internal": "finance.residence_periods.v1", "args": {"from": "x", "to": "y"}},
+     "function_error": false, "reply": {"ok": false, "error": {"code": "invalid_args", "message": "'from' must be an ISO date YYYY-MM-DD"}},
+     "travel": {"code": "HOME_UNAVAILABLE", "cause": "invalid_args"}},
+    {"name": "args_not_object", "event": {"internal": "finance.residence_periods.v1", "args": []},
+     "function_error": false, "reply": {"ok": false, "error": {"code": "invalid_args", "message": "'args' must be an object"}},
+     "travel": {"code": "HOME_UNAVAILABLE", "cause": "invalid_args"}},
+    {"name": "not_read_only", "event": null,
+     "function_error": false, "reply": {"ok": false, "error": {"code": "not_read_only", "message": "the internal door serves read tools only"}},
+     "travel": {"code": "HOME_UNAVAILABLE", "cause": "backend_error"}},
+    {"name": "internal_error", "event": null,
+     "function_error": false, "reply": {"ok": false, "error": {"code": "internal_error", "message": "OperationalError"}},
+     "travel": {"code": "HOME_UNAVAILABLE", "cause": "backend_error"}},
+    {"name": "unknown_internal_value", "event": {"internal": "finance.residence_periods.v2", "args": {}},
+     "function_error": true, "reply": null,
+     "travel": {"code": "HOME_UNAVAILABLE", "cause": "backend_error"}}
+  ]
 }

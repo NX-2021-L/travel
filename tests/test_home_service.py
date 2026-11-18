@@ -62,7 +62,7 @@ def refusal(stub, a="2021-02-01", b="2021-03-01"):
 def test_pinned_fixture_is_byte_identical_to_finances():
     """The fixture is finance's file, copied byte for byte; its sha256 is pinned so an edit here is loud."""
     import hashlib
-    assert hashlib.sha256(PINNED.read_bytes()).hexdigest() == "74f036fb3963d195d9a9f6cb04319ecdd754bc047011e2f71342df60698664d8"
+    assert hashlib.sha256(PINNED.read_bytes()).hexdigest() == "517c27df09b1bce7c6f028ab8c0e79276c274d3bbdcb9f7833ee51fbf7f9f6ba"
 
 
 def test_request_builder_produces_the_fixtures_event():
@@ -386,3 +386,18 @@ def test_fixture_has_every_state_and_a_gap_and_no_address():
 
 def test_it_stays_out_of_the_lane_registry():
     assert "home_service" not in c.LANE_MODULES.values() and not hasattr(hs, "HANDLERS")
+
+
+# ---------------------------------------------------------------- MOM-TSK-002-0I: the shared fixture's failure rows
+
+@pytest.mark.parametrize("row", CONTRACT["failures"], ids=lambda r: r["name"])
+def test_each_pinned_failure_row_is_home_unavailable_with_its_cause(row):
+    body = b"" if row["reply"] is None else json.dumps(row["reply"]).encode()
+    e = refusal(Stub(body, function_error="Unhandled" if row["function_error"] else None))
+    assert e.code == row["travel"]["code"] and e.cause == row["travel"]["cause"]
+
+
+def test_pinned_caller_block_matches_the_event_travel_sends():
+    assert set(CONTRACT["caller"]) == {"person", "session", "identity", "city"}
+    assert set(CONTRACT["event"]) == {"internal", "args"}
+    assert all("city" not in p for p in CONTRACT["reply"]["result"]["periods"])
