@@ -75,6 +75,17 @@ def stack_parameters(env: dict) -> list:
     return [{"ParameterKey": k, "ParameterValue": v} for k, v in pairs]
 
 
+def package_check_env(env: dict, base: dict) -> dict:
+    """The environment the deployed code is executed under for the package check. The internal door will not start
+    without INTERNAL_INVOKER_ROLE, so it carries the same two role ARNs the function itself is given: her door's
+    future invoker role (named, granted nothing: the stack's InvokerGrant stays false until lane N6A) and her
+    deploy role. Built at run time from the account variable, never from the repository."""
+    acct = env["TARGET_ACCOUNT_ID"]
+    return {**base,
+            "INTERNAL_INVOKER_ROLE": role_arn(acct, env["INTERNAL_INVOKER_ROLE_NAME"]),
+            "INTERNAL_DEPLOY_ROLE": role_arn(acct, env["DEPLOY_ROLE_NAME"])}
+
+
 def health_event(deploy_role: str) -> dict:
     return {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": HEALTH_METHOD}}
 
@@ -271,9 +282,12 @@ def health(env) -> str:
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "out.json")
         r = aws("lambda", "invoke", "--function-name", env["FUNCTION_NAME"], "--payload", json.dumps(health_event(deploy_role)),
-                "--cli-binary-format", "raw-in-base64-out", out, region=env["AWS_REGION"], check=False, timeout=90)
+                "--cli-binary-format", "raw-in-base64-out", "--query", "FunctionError", "--output", "text", out,
+                region=env["AWS_REGION"], check=False, timeout=90)
         if r.returncode != 0:
             return "health read could not be made: " + r.stderr.strip()[:200]
+        if r.stdout.strip() not in ("", "None"):  # rc 0 only says the invoke was delivered; the function may have failed to start
+            return f"health read: the function failed ({r.stdout.strip()}), not an answer"
         try:
             response = json.load(open(out))
         except ValueError:
@@ -314,7 +328,7 @@ def cmd_verify(_a) -> int:
             problems.append("public permission in the resource policy: " + ", ".join(bad))
     elif "ResourceNotFoundException" not in p.stderr:
         problems.append("the resource policy could not be read, so 'no public permission' is unproven")
-    if subprocess.run([sys.executable, str(HERE / "verify_deployed_package.py")]).returncode != 0:
+    if subprocess.run([sys.executable, str(HERE / "verify_deployed_package.py")], env=package_check_env(env, dict(os.environ))).returncode != 0:
         problems.append("deployed package")
     if os.environ.get("FORCE_VERIFY_FAIL") == "true":
         problems.append("forced (FORCE_VERIFY_FAIL drill)")
