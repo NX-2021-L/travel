@@ -181,10 +181,10 @@ def test_her_real_settings_render_io_s_tool_list_and_schemas():
 
 # ---- her deployment names her finance read by NAME (MOM-TSK-004-0H, lane N3H) ----
 def test_her_target_names_her_finance_read_by_bare_name():
-    assert HER["FINANCE_READ_FUNCTION"] == "finance-mcp"  # a name: the function in her own account; no account id, no ARN
+    assert HER["FINANCE_READ_FUNCTION"] == "finance-residence-read"  # a name: the function in her own account; no account id, no ARN
     import target_ops as to
     p = {x["ParameterKey"]: x["ParameterValue"] for x in to.stack_parameters({**HER, "TARGET_ACCOUNT_ID": ACCT})}
-    assert p["FinanceReadFunction"] == "finance-mcp"
+    assert p["FinanceReadFunction"] == "finance-residence-read"
     assert ACCT not in (ROOT / "deploy/targets/nana.env").read_text()
 
 
@@ -199,23 +199,23 @@ def test_template_grants_one_action_on_one_function_by_name_in_her_own_account()
 
 
 def test_role_policy_accepts_her_finance_read_built_from_the_bare_name():
-    arn = f"arn:aws:lambda:us-west-2:{ACCT}:function:finance-mcp"
+    arn = f"arn:aws:lambda:us-west-2:{ACCT}:function:finance-residence-read"
     docs = [{"Statement": [{"Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": arn}]}]
     assert vi.role_policy_problems(docs, OWN, arn) == []
-    assert vi.role_policy_problems(docs, OWN, f"arn:aws:lambda:us-west-2:{ACCT}:function:finance-mcp-writer")  # another function
+    assert vi.role_policy_problems(docs, OWN, f"arn:aws:lambda:us-west-2:{ACCT}:function:finance-residence-read-writer")  # another function
 
 
 def test_her_finance_read_failing_returns_hers_alone(monkeypatch):
     """A3: the failure of her read is HOME_UNAVAILABLE on her deployment; nothing of io's is touched."""
     import home_service as hs
-    monkeypatch.setenv("FINANCE_READ_FUNCTION", "finance-mcp")
+    monkeypatch.setenv("FINANCE_READ_FUNCTION", "finance-residence-read")
     seen = []
     def boom(fn, payload, timeout):
         seen.append(fn)
         raise RuntimeError("down")
     with pytest.raises(hs.HomeError) as e:
         hs.read_home("2026-01-01", "2026-02-01", invoker=boom)
-    assert e.value.code == "HOME_UNAVAILABLE" and seen == ["finance-mcp"]  # one attempt, her function only
+    assert e.value.code == "HOME_UNAVAILABLE" and seen == ["finance-residence-read"]  # one attempt, her function only
 
 
 def test_trips_read_refuses_home_unavailable_without_a_finance_read(monkeypatch):
