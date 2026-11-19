@@ -83,10 +83,11 @@ Parameters:
   FinanceReadFunction:
     Type: String
     Default: ""
-    Description: ARN of finance's Lambda function, invoked directly for the residence read (FLY-TSK-078). Empty = no finance call and no grant. Finance's own resource policy must also name this deployment's role.
+    Description: Name (same account) or ARN of finance's Lambda function, invoked directly for the residence read (FLY-TSK-078). Empty = no finance call and no grant. Finance's own resource policy must also name this deployment's role.
 
 Conditions:
   HasFinanceFunction: !Not [!Equals [!Ref FinanceReadFunction, ""]]
+  FinanceReadIsArn: !Equals [!Select [0, !Split [":", !Ref FinanceReadFunction]], "arn"]
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
   GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]], !Equals [!Ref InvokerGrant, "true"]]
   HasCodeBucket: !Not [!Equals [!Ref CodeS3Bucket, ""]]
@@ -204,7 +205,12 @@ Resources:
               Statement:
                 - Effect: Allow
                   Action: lambda:InvokeFunction
-                  Resource: !Ref FinanceReadFunction
+                  # One action on one function. A bare name (her deployment) is the function in this stack's own
+                  # account and region; an ARN (io's) is used as given. No account id is written in the repository.
+                  Resource: !If
+                    - FinanceReadIsArn
+                    - !Ref FinanceReadFunction
+                    - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${FinanceReadFunction}"
           - !Ref AWS::NoValue
 
   McpFunction:
