@@ -239,7 +239,8 @@ def cmd_live(a) -> int:
         docs.append((_json(aws(a.nana_profile, region_her, "iam", "get-role-policy", "--role-name", role, "--policy-name", n)) or {}).get("PolicyDocument", {}))
     cfg = _json(aws(a.nana_profile, region_her, "lambda", "get-function-configuration", "--function-name", fn_her)) or {}
     finance = (cfg.get("Environment", {}).get("Variables") or {}).get("FINANCE_READ_FUNCTION", "")
-    check("her travel role names only her tables and her finance read", role_policy_problems(docs, {her["TABLE_NAME"], her["RECORDS_TABLE_NAME"]}, finance))
+    finance_arn = finance if (not finance or finance.startswith("arn:")) else f"arn:aws:lambda:{region_her}:{acct}:function:{finance}"
+    check("her travel role names only her tables and her finance read", role_policy_problems(docs, {her["TABLE_NAME"], her["RECORDS_TABLE_NAME"]}, finance_arn))
     check("her function holds no row or setting of io's (env keys only, no io function or table named)", [
         f"names io's {k}" for k, v in (cfg.get("Environment", {}).get("Variables") or {}).items() if io_acct and io_acct in str(v)])
     # io's account, io's profile: nothing names her
@@ -276,8 +277,8 @@ def cmd_live(a) -> int:
     check("her tool list and schemas equal io's (deployed modules and snapshots byte-identical)", parity_problems(pio, phe))
     # the trips read: needs the named invoker (not granted yet); the refusal is proved on fixtures in CI, here its cause is read
     check("her trips read refuses HOME_UNAVAILABLE (cause: no finance read configured in her function)" if not finance else
-          "her finance read is configured: HOME_UNAVAILABLE is then a runtime answer, not provable without the invoker grant",
-          [] if not finance else ["FINANCE_READ_FUNCTION is set; confirm the live read with io before the invoker grant"])
+          "her finance read is configured (A3: hers failing returns hers alone); the live read is the coordinator's post-deploy check",
+          [] if (not finance or "/" not in finance) else ["FINANCE_READ_FUNCTION must be a function name or ARN"])
     bad = [n for n, p in results if p]
     print(f"{len(results) - len(bad)}/{len(results)} checks passed")
     return 1 if bad else 0
