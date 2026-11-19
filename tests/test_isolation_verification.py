@@ -51,9 +51,19 @@ def test_template_principals_are_the_named_list_deploy_role_only_until_a_grant()
     assert "*" in vi.eval_template(T, public=True)["principals"]
 
 
-def test_her_target_settings_grant_no_invoker():
-    assert HER["DOOR_MODE"] == "internal" and HER["INTERNAL_INVOKER_ROLE_NAME"]
-    assert "InvokerGrant" not in json.dumps(HER) and "PublicEdge" not in json.dumps(HER)
+def test_her_target_names_her_doors_real_role_and_grants_it():
+    """N6A: the invoker is the role of her door function nana-mcp, and the grant is on (that one role)."""
+    assert HER["DOOR_MODE"] == "internal"
+    assert HER["INTERNAL_INVOKER_ROLE_NAME"] == "nana-door-role" and HER["INVOKER_GRANT"] == "true"
+    assert "PublicEdge" not in json.dumps(HER)
+
+
+def test_function_policy_after_the_grant_names_her_doors_role_and_her_deploy_role_and_no_other():
+    named = {DEPLOY, INVOKER}
+    assert vi.function_policy_problems(policy(DEPLOY, INVOKER), named) == []
+    assert vi.function_policy_problems(policy(DEPLOY), named)  # the door's role missing: the grant did not land
+    assert vi.function_policy_problems(policy(DEPLOY, INVOKER, f"arn:aws:iam::{ACCT}:role/another-role"), named)  # a third role
+    assert vi.function_policy_problems(policy(DEPLOY, INVOKER, "*"), named)  # public
 
 
 def test_function_policy_admits_her_deploy_role_alone():

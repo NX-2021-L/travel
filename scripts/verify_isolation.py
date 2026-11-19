@@ -218,6 +218,8 @@ def cmd_live(a) -> int:
     region_her, region_io = her["AWS_REGION"], io_env["AWS_REGION"]
     fn_her, fn_io = her["FUNCTION_NAME"], io_env["FUNCTION_NAME"]
     deploy_role = f"arn:aws:iam::{acct}:role/{her['DEPLOY_ROLE_NAME']}"
+    door_role = f"arn:aws:iam::{acct}:role/{her['INTERNAL_INVOKER_ROLE_NAME']}"
+    named = {deploy_role} | ({door_role} if her.get("INVOKER_GRANT") == "true" else set())
     io_acct = (_json(aws(a.io_profile, region_io, "sts", "get-caller-identity")) or {}).get("Account", "")
     results = []
 
@@ -227,7 +229,7 @@ def cmd_live(a) -> int:
 
     # her account, her profile
     pol = aws(a.nana_profile, region_her, "lambda", "get-policy", "--function-name", fn_her, "--query", "Policy", "--output", "text")
-    check("her function policy admits her deploy role alone", function_policy_problems(pol.stdout.strip() if pol.returncode == 0 else "", {deploy_role}) if pol.returncode == 0 else ["policy unreadable: " + pol.stderr[:120]])
+    check("her function policy names her door's role and her deploy role and no other" if len(named) > 1 else "her function policy admits her deploy role alone", function_policy_problems(pol.stdout.strip() if pol.returncode == 0 else "", named) if pol.returncode == 0 else ["policy unreadable: " + pol.stderr[:120]])
     url = aws(a.nana_profile, region_her, "lambda", "get-function-url-config", "--function-name", fn_her)
     check("her function has no public address", [] if url.returncode != 0 and "ResourceNotFoundException" in url.stderr else ["a Function URL exists or could not be read"])
     for t in (her["TABLE_NAME"], her["RECORDS_TABLE_NAME"]):
@@ -248,6 +250,10 @@ def cmd_live(a) -> int:
     for fn in (fn_io,):
         texts.append(aws(a.io_profile, region_io, "lambda", "get-policy", "--function-name", fn, "--query", "Policy", "--output", "text").stdout)
         texts.append(json.dumps(_json(aws(a.io_profile, region_io, "lambda", "get-function-configuration", "--function-name", fn))))
+    # N6A: a role the policy does not name is refused by IAM itself (the claim in an event is only a tripwire): io's profile
+    # is such a role, and so is her own profile's identity here if it is not a named role
+    r, _ = _invoke(a.io_profile, region_her, f"arn:aws:lambda:{region_her}:{acct}:function:{fn_her}", {"invoker_role": door_role, "mcp": {"jsonrpc": "2.0", "id": 9, "method": "ping"}})
+    check("a role her policy does not name is refused invoking her function, even claiming her door's role (live)", [] if is_refused(r.returncode, r.stderr) else ["not refused"])
     for t in (io_env["TABLE_NAME"], io_env["RECORDS_TABLE_NAME"]):
         texts.append(aws(a.io_profile, region_io, "dynamodb", "get-resource-policy", "--resource-arn", f"arn:aws:dynamodb:{region_io}:{io_acct}:table/{t}").stdout)
     texts.append(aws(a.io_profile, region_io, "iam", "get-role", "--role-name", io_env.get("LAMBDA_ROLE_NAME", "io-travel-mcp-lambda-role")).stdout)
