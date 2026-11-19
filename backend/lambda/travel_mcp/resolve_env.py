@@ -19,6 +19,10 @@ import settings
 # Every setting a deployment supplies is declared by the contract; nothing here names a deployment.
 KEYS = list(contract.SETTINGS)
 
+# ENC-ISS-919: io-kit ships no fleet registry, so the public edge's connector comes from the deployment. A setting the
+# function reads (IO_KIT_FLEET_JSON, inline JSON), not named by the contract; only the public door needs one.
+FLEET_KEYS = ("IO_KIT_FLEET_JSON",)
+
 # Deploy-time settings the deploy script and workflow need (they never reach the function). Plan refuses
 # when one is absent, so a missing one stops the run before apply.
 DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEARTIFACT_OWNER",
@@ -37,7 +41,7 @@ DROPPED = ("FINANCE_READ_CREDENTIAL", "FINANCE_READ_CREDENTIAL_SECRET",  # FLY-T
 def resolve(current: dict, supplied: dict) -> dict:
     env = dict(current or {})
     env["MCP_TRANSPORT"] = "streamable_http"
-    for k in KEYS + list(door.DOOR_KEYS):
+    for k in KEYS + list(door.DOOR_KEYS) + list(FLEET_KEYS):
         if supplied.get(k):
             env[k] = supplied[k]
     return {k: v for k, v in env.items() if v and k not in DROPPED}
@@ -60,6 +64,14 @@ def guard(env: dict) -> str:
         door.load(env)
     except door.DoorError as exc:
         return "refusing to deploy: " + str(exc).replace("refusing to start: ", "")
+    return ""
+
+
+def fleet_problem(env: dict) -> str:
+    """Non-empty message when a public edge is resolved without its connector registry (ENC-ISS-919). The internal door
+    resolves no connector, so it needs none (and hers must carry none)."""
+    if (env.get("DOOR_MODE") or "").strip() != "internal" and not (env.get("IO_KIT_FLEET_JSON") or "").strip():
+        return "refusing to deploy: a public edge needs IO_KIT_FLEET_JSON (io-kit ships no fleet registry)"
     return ""
 
 
@@ -96,7 +108,7 @@ def main() -> int:
     except ValueError:
         current = {}
     env = resolve(current, os.environ)
-    msg = guard(env)
+    msg = guard(env) or fleet_problem(env)
     if msg:
         print(msg, file=sys.stderr)
         return 3

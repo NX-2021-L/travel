@@ -20,5 +20,13 @@ _TEST_DEPLOYMENT = {
     "DOOR_MODE": "public",
     "AWS_REGION": "us-west-2",
 }
+# io-kit ships no fleet registry (ENC-ISS-919): the public edge's connector comes from IO_KIT_FLEET_JSON, which io's
+# settings file supplies. Tests use that same registry so they exercise what io's deployment deploys.
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_m = re.search(r"^IO_KIT_FLEET_JSON=(.+)$", (Path(__file__).resolve().parents[1] / "deploy" / "settings.env").read_text(), re.M)
+if _m:
+    _TEST_DEPLOYMENT["IO_KIT_FLEET_JSON"] = _m.group(1).strip()
 for _k, _v in _TEST_DEPLOYMENT.items():
     os.environ.setdefault(_k, _v)

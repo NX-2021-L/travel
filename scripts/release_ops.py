@@ -100,7 +100,7 @@ def cmd_plan(_a) -> int:
     current = (cfg.get("Environment") or {}).get("Variables") or {}
     resolved = resolve_env.resolve(current, os.environ)
     print(render_plan(cfg, highest_version(versions), resolve_env.diff_env(current, resolved), requirements_lines()))
-    msg = resolve_env.guard(resolved)
+    msg = resolve_env.guard(resolved) or resolve_env.fleet_problem(resolved)
     if msg:
         print(f"PLAN REFUSED: {msg}")
         return 3
