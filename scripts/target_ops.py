@@ -61,12 +61,16 @@ def role_arn(account_id: str, role_name: str) -> str:
 
 
 def stack_parameters(env: dict) -> list:
-    """The template's parameters for this target. No invoker is granted: InvokerGrant is false."""
+    """The template's parameters for this target. InvokerGrant is false unless the target's settings say INVOKER_GRANT=true
+    (lane N6A: her door's role is then granted lambda:InvokeFunction, that one role and no other)."""
+    grant = (env.get("INVOKER_GRANT") or "false").strip()
+    if grant not in ("true", "false"):
+        raise TargetError("INVOKER_GRANT must be true or false")
     acct = env["TARGET_ACCOUNT_ID"]
     pairs = [
         ("FlightsTableName", env["TABLE_NAME"]), ("RecordsTableName", env["RECORDS_TABLE_NAME"]),
         ("FunctionName", env["FUNCTION_NAME"]), ("RoleName", env["LAMBDA_ROLE_NAME"]),
-        ("SurfaceName", env["SURFACE_NAME"]), ("PublicEdge", "false"), ("InvokerGrant", "false"),
+        ("SurfaceName", env["SURFACE_NAME"]), ("PublicEdge", "false"), ("InvokerGrant", grant),
         ("InternalInvokerRole", role_arn(acct, env["INTERNAL_INVOKER_ROLE_NAME"])),
         ("InternalDeployRole", role_arn(acct, env["DEPLOY_ROLE_NAME"])),
     ]
@@ -78,7 +82,7 @@ def stack_parameters(env: dict) -> list:
 def package_check_env(env: dict, base: dict) -> dict:
     """The environment the deployed code is executed under for the package check. The internal door will not start
     without INTERNAL_INVOKER_ROLE, so it carries the same two role ARNs the function itself is given: her door's
-    future invoker role (named, granted nothing: the stack's InvokerGrant stays false until lane N6A) and her
+    invoker role (her door's role; granted only when the target's INVOKER_GRANT is true, lane N6A) and her
     deploy role. Built at run time from the account variable, never from the repository."""
     acct = env["TARGET_ACCOUNT_ID"]
     return {**base,

@@ -64,7 +64,12 @@ def test_the_helper_refuses_a_target_without_an_account_or_with_a_public_door():
 
 def test_stack_parameters_name_no_invoker_and_each_role_exactly():
     p = {x["ParameterKey"]: x["ParameterValue"] for x in to.stack_parameters(ENV)}
-    assert p["PublicEdge"] == "false" and p["InvokerGrant"] == "false"
+    assert p["PublicEdge"] == "false" and p["InvokerGrant"] == "true"  # N6A: her door's role is granted
+    assert p["InternalInvokerRole"] == f"arn:aws:iam::{ACCT}:role/nana-door-role"
+    off = {x["ParameterKey"]: x["ParameterValue"] for x in to.stack_parameters({k: v for k, v in ENV.items() if k != "INVOKER_GRANT"})}
+    assert off["InvokerGrant"] == "false"  # absent means no grant
+    with pytest.raises(to.TargetError):
+        to.stack_parameters({**ENV, "INVOKER_GRANT": "yes"})
     assert p["InternalDeployRole"] == f"arn:aws:iam::{ACCT}:role/{TARGET['DEPLOY_ROLE_NAME']}"
     assert p["SurfaceName"] == TARGET["SURFACE_NAME"]
     assert not any("*" in v for v in p.values())
@@ -250,7 +255,7 @@ def test_package_check_carries_the_invoker_and_deploy_role_arns_built_at_run_tim
     assert e["INTERNAL_DEPLOY_ROLE"] == f"arn:aws:iam::{ACCT}:role/{TARGET['DEPLOY_ROLE_NAME']}"
     p = {x["ParameterKey"]: x["ParameterValue"] for x in to.stack_parameters(ENV)}  # the same ARNs the function is given
     assert (e["INTERNAL_INVOKER_ROLE"], e["INTERNAL_DEPLOY_ROLE"]) == (p["InternalInvokerRole"], p["InternalDeployRole"])
-    assert p["InvokerGrant"] == "false"  # named, granted nothing
+    assert p["InvokerGrant"] == "true"  # named and granted (N6A)
 
 
 def test_verify_runs_the_package_check_under_that_environment():
