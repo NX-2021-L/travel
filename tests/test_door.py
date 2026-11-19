@@ -78,7 +78,7 @@ def test_deploy_guard_refuses_without_mode_and_settings_env_supplies_it():
     import contract
     complete = {k: "x" for k in contract.SETTINGS}
     assert "DOOR_MODE" in resolve_env.guard(complete)
-    assert resolve_env.guard({**complete, "DOOR_MODE": "public"}) == ""
+    assert resolve_env.guard({**complete, "DOOR_MODE": "public", "IO_KIT_FLEET_JSON": "{}"}) == ""
     sup = (D.parent.parent.parent / "deploy" / "settings.env").read_text()
     assert "\nDOOR_MODE=public\n" in sup  # io is a public edge
     assert resolve_env.resolve({}, {"DOOR_MODE": "public"})["DOOR_MODE"] == "public"
