@@ -3,7 +3,7 @@
 dedup_candidates.py -- Corpus mining Phase 3: Deduplication & classification.
 
 Reads 422 flight candidate records from S3 Parquet (Phase 2 output), compares
-against 298 existing records in DynamoDB io-travel-flights, and classifies each
+against 298 existing records in the DynamoDB flights table, and classifies each
 candidate as: net_new, exact_duplicate, near_match, or conflict.
 
 Outputs a deduped Parquet (all 422 rows with classification columns) and a

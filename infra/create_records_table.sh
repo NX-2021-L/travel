@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Idempotently create io's travel records table (FLY-TSK-041), matching RecordsTable in
 # infra/cloudformation/travel-deployment.yaml. Does NOT apply that template and does not touch
-# io-travel-flights or the function (BRD OD-3).
+# the flights table or the function (BRD OD-3).
 # Usage: AWS_PROFILE=... infra/create_records_table.sh [table-name] [region]
 # Safe to re-run: prints "already exists" and only ensures the stream, PITR and deletion protection.
 #
@@ -10,8 +10,8 @@
 # got the stream from ONE `aws dynamodb update-table --stream-specification StreamEnabled=true,StreamViewType=NEW_IMAGE`,
 # on io's approval, in place; not from a stack and not from a deploy-path plan. Nothing in travel reads the stream.
 set -euo pipefail
-TABLE="${1:-io-travel-records}"
-REGION="${2:-us-west-2}"
+TABLE="${1:?ABORT: pass the records table name (RECORDS_TABLE_NAME of the deployment)}"
+REGION="${2:?ABORT: pass the region (AWS_REGION of the deployment)}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" >/dev/null 2>&1; then

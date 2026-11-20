@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed DynamoDB io-travel-flights table from flights.parquet.
+"""Seed the DynamoDB flights table (TABLE_NAME, from the deployment settings) from flights.parquet.
 
 Reads from S3 by default, falls back to a local file for development.
 Generates deterministic flight_id values so re-runs are idempotent.
@@ -23,8 +23,11 @@ import pandas as pd
 
 S3_BUCKET = "enceladus-356364570033-us-west-2-an"
 S3_KEY = "io/travel/flights/flights.parquet"
-TABLE_NAME = "io-travel-flights"
-REGION = "us-west-2"
+import os
+
+# MOM-TSK-021: the table is named by the deployment being seeded (deploy/settings.env or a target file), never here.
+TABLE_NAME = os.environ.get("TABLE_NAME", "")
+REGION = os.environ.get("AWS_REGION", "")
 
 # Columns that are entirely null in the source data — omit from DynamoDB
 EXCLUDE_COLUMNS = {"discount_1", "discount_2", "discount_source"}
@@ -139,10 +142,12 @@ def seed(df: pd.DataFrame, dry_run: bool = False) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Seed io-travel-flights DynamoDB table")
+    parser = argparse.ArgumentParser(description="Seed the flights DynamoDB table named by TABLE_NAME")
     parser.add_argument("--dry-run", action="store_true", help="Preview first 5 items without writing")
     parser.add_argument("--local", type=str, help="Path to local Parquet file (skips S3)")
     args = parser.parse_args()
+    if not TABLE_NAME or not REGION:
+        raise SystemExit("ABORT: TABLE_NAME and AWS_REGION are not supplied (load deploy/settings.env or a target file first)")
 
     print(f"Reading Parquet data...")
     if args.local:

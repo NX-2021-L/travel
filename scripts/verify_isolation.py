@@ -256,7 +256,7 @@ def cmd_live(a) -> int:
     check("a role her policy does not name is refused invoking her function, even claiming her door's role (live)", [] if is_refused(r.returncode, r.stderr) else ["not refused"])
     for t in (io_env["TABLE_NAME"], io_env["RECORDS_TABLE_NAME"]):
         texts.append(aws(a.io_profile, region_io, "dynamodb", "get-resource-policy", "--resource-arn", f"arn:aws:dynamodb:{region_io}:{io_acct}:table/{t}").stdout)
-    texts.append(aws(a.io_profile, region_io, "iam", "get-role", "--role-name", io_env.get("LAMBDA_ROLE_NAME", "io-travel-mcp-lambda-role")).stdout)
+    texts.append(aws(a.io_profile, region_io, "iam", "get-role", "--role-name", io_env["LAMBDA_ROLE_ARN"].rsplit("/", 1)[-1]).stdout)
     check("no travel resource of io's names her account", [f"io-side text #{i} names her account" for i in names_account(texts, acct)])
     # refused live, both directions
     health_event = {"invoker_role": deploy_role, "mcp": {"jsonrpc": "2.0", "id": 1, "method": "ping"}}
