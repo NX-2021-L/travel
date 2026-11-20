@@ -78,7 +78,8 @@ COGNITO_ALLOWED_SUBS = [
     x.strip() for x in _S["COGNITO_ALLOWED_SUBS"].split(",") if x.strip()
 ]
 
-# Second issuer (the manifest's pool, DVP-TSK-903): own owner allow-list, IOGRAPH_ALLOWED_SUBS (optional).
+# Second issuer (the manifest's pool, DVP-TSK-903): own owner allow-list, SECOND_ISSUER_ALLOWED_SUBS (optional), else the earlier
+# name IOGRAPH_ALLOWED_SUBS (MOM-TSK-028: a deployment that still carries it keeps working).
 def _csv_env(name: str) -> List[str]:
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
@@ -227,7 +228,7 @@ def _principal_from_claims(claims: Dict[str, Any]) -> Dict[str, Any]:
         "sub": str(claims.get("sub") or ""),
         "groups": [str(g) for g in groups],
         "allowed": bool(claims.get("sub")) and str(claims.get("sub")) in (
-            _csv_env("IOGRAPH_ALLOWED_SUBS") if claims.get("_pool") == "iograph" else COGNITO_ALLOWED_SUBS
+            (_csv_env("SECOND_ISSUER_ALLOWED_SUBS") or _csv_env("IOGRAPH_ALLOWED_SUBS")) if claims.get("_pool") == "iograph" else COGNITO_ALLOWED_SUBS
         ),
         "pool": claims.get("_pool", "iograph"),
     }
