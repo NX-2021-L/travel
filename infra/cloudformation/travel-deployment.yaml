@@ -76,7 +76,7 @@ Parameters:
   CognitoAllowedSubs:
     Type: String
     Default: ""
-  IographAllowedSubs:
+  SecondIssuerAllowedSubs:
     Type: String
     Default: ""
 
@@ -247,7 +247,7 @@ Resources:
           COGNITO_CLIENT_ID: !Ref CognitoClientId
           COGNITO_REGION: !Ref CognitoRegion
           COGNITO_ALLOWED_SUBS: !Ref CognitoAllowedSubs
-          IOGRAPH_ALLOWED_SUBS: !Ref IographAllowedSubs
+          SECOND_ISSUER_ALLOWED_SUBS: !Ref SecondIssuerAllowedSubs
           FINANCE_READ_FUNCTION: !If [HasFinanceFunction, !Ref FinanceReadFunction, !Ref "AWS::NoValue"]
 
   # Public edge only: both resources below are guarded by IsPublicEdge. An internal

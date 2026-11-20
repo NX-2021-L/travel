@@ -112,3 +112,11 @@ def test_cors_headers_on_401(dual):
     r = lf.lambda_handler(_event("POST", "https://think.thepup.io"), None)
     assert r["statusCode"] == 401
     assert r["headers"]["Access-Control-Allow-Origin"] == "https://think.thepup.io"
+
+
+def test_the_neutral_second_issuer_name_is_read_first(dual, monkeypatch):
+    """MOM-TSK-028: SECOND_ISSUER_ALLOWED_SUBS wins; the earlier name is only the fallback."""
+    _, iog, _ = dual
+    monkeypatch.setenv("SECOND_ISSUER_ALLOWED_SUBS", "new-sub")
+    assert payload(_get(_tok(iog, IOG_KID, IOG_ISS, "new-sub", IOG_CLIENT)))["success"]
+    assert not payload(_get(_tok(iog, IOG_KID, IOG_ISS, "io-sub", IOG_CLIENT))).get("success")
