@@ -124,12 +124,15 @@ CORRECTION_COLUMNS = [
     _col("method", "method", "enum", _options("method"), True, default_hidden=True),
     _col("supersedes", "supersedes", "json", editable=True, default_hidden=True),
 ]
-# Column.hint.under (lane 2O, the W2b kit release): the column whose value a host draws under this one's cell, as the
-# canvas pairs them. Served only once think is live on that release (a consumer on an older kit rejects the field).
-# With the hints served, the paired columns are drawn under their cells, so they and the basis enum are hidden by
-# default (still served); without them, the key and the bases show as their own columns.
-UNDER = {"place": "key", "first_date": "first_hint", "last_date": "last_hint", "nights": "nights_hint"}
-DRAWN_UNDER_INSTEAD = ("key", "first_basis", "last_basis", "nights_exact")
+# Column.hint.under (lane 2O, io-kit PR 325, the W2b kit release): set on the PAIRED column, naming the column it is
+# drawn beneath; the kit draws its value as a sub-line there and gives it no column of its own. hint.tone maps the
+# paired column's own served value to "dim" or "soft" (unlisted values are dim): canvas A6.4 draws "inferred" and
+# "not settled" in the board's soft tone. Served only once think is live on that release (a consumer on an older kit
+# rejects the field). With the hints served, the basis enum and nights_exact stay served and are hidden by default.
+SOFT = {"inferred": "soft", "not settled": "soft"}
+UNDER = {"key": ("place", None), "first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT),
+         "nights_hint": ("nights", None)}
+HIDDEN_WHEN_HINTED = ("first_basis", "last_basis", "nights_exact")
 SERVE_UNDER_HINTS = False
 PLACE_UNKNOWN = "unknown"
 
@@ -139,11 +142,15 @@ def _trip_columns():
         return TRIP_COLUMNS
     out = []
     for c in TRIP_COLUMNS:
+        hint = {k: v for k, v in c.get("hint", {}).items() if k != "default_hidden"} if c["id"] in UNDER else dict(c.get("hint", {}))
         if c["id"] in UNDER:
-            c = {**c, "hint": {**c.get("hint", {}), "under": UNDER[c["id"]]}}
-        elif c["id"] in DRAWN_UNDER_INSTEAD:
-            c = {**c, "hint": {**c.get("hint", {}), "default_hidden": True}}
-        out.append(c)
+            under, tone = UNDER[c["id"]]
+            hint["under"] = under
+            if tone:
+                hint["tone"] = dict(tone)
+        elif c["id"] in HIDDEN_WHEN_HINTED:
+            hint["default_hidden"] = True
+        out.append({**c, "hint": hint} if hint else {k: v for k, v in c.items() if k != "hint"})
     return out
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "

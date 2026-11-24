@@ -94,17 +94,27 @@ def test_corrections_show_the_boards_columns_and_hide_the_rest():
 
 def test_under_hints_are_off_until_the_w2b_kit_is_live(monkeypatch):
     off = _cols(rr.descriptors()[rr.TRIPS])
-    assert not any("under" in c.get("hint", {}) for c in off.values())
-    assert not any(off[k].get("hint", {}).get("default_hidden") for k in rr.DRAWN_UNDER_INSTEAD)  # key, bases shown
+    assert not any("under" in c.get("hint", {}) or "tone" in c.get("hint", {}) for c in off.values())
+    assert not any(off[k].get("hint", {}).get("default_hidden") for k in ("key", *rr.HIDDEN_WHEN_HINTED))
     assert all(off[k]["hint"]["default_hidden"] for k in ("first_hint", "last_hint", "nights_hint"))
     monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", True)
     cols = _cols(rr.descriptors()[rr.TRIPS])
+    # io-kit PR 325: under sits on the paired column, naming the plain column it is drawn beneath.
     assert {k: c["hint"]["under"] for k, c in cols.items() if "under" in c.get("hint", {})} == {
-        "place": "key", "first_date": "first_hint", "last_date": "last_hint", "nights": "nights_hint"}
-    assert cols["nights"]["hint"]["align"] == "end"  # an existing hint is kept
-    assert all(v in cols for v in rr.UNDER.values())  # every paired column is served
-    assert all(cols[k]["hint"]["default_hidden"] for k in rr.DRAWN_UNDER_INSTEAD)  # still served, drawn under instead
+        "key": "place", "first_hint": "first_date", "last_hint": "last_date", "nights_hint": "nights"}
+    assert cols["first_hint"]["hint"]["tone"] == cols["last_hint"]["hint"]["tone"] == {"inferred": "soft", "not settled": "soft"}
+    assert "tone" not in cols["key"]["hint"] and "tone" not in cols["nights_hint"]["hint"]
+    for k, c in cols.items():  # REC-C75: never itself, never a missing or hinted column; tones dim or soft
+        h = c.get("hint", {})
+        if "under" in h:
+            assert h["under"] != k and h["under"] in cols and "under" not in cols[h["under"]].get("hint", {})
+            assert "default_hidden" not in h
+            assert set(h.get("tone", {}).values()) <= {"dim", "soft"}
+    assert all(cols[k]["hint"]["default_hidden"] for k in rr.HIDDEN_WHEN_HINTED)
+    assert cols["nights"]["hint"] == {"align": "end"}
     assert "source" not in cols  # canvas A6.1: lineage stays in the row's sources
+    tones = {rr.date_hint(b, r, y) for b, r, y in [("derived", "forced", None), ("undecided", None, None)]}
+    assert tones == set(rr.SOFT)  # the toned words are words the door serves
 
 
 @pytest.mark.parametrize("basis,rule,by,words", [
