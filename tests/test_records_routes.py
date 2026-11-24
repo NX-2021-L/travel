@@ -247,3 +247,9 @@ def test_internal_door_never_serves_records():
     ev = {"requestContext": {"http": {"method": "GET", "path": "/records/recordsets"}}}
     with pytest.raises(HttpEventRefused):
         admit(ev, "internal", "role")
+
+
+def test_flags_and_signals_are_hidden_by_default():
+    # FLY-TSK-089, orchestration 18:18Z: the grid opens without them, as the canvas does; they stay in every row
+    cols = {c["id"]: c for c in rr.descriptors()["trips"]["columns"]}
+    assert cols["flags"]["hint"]["default_hidden"] is True and cols["signals"]["hint"]["default_hidden"] is True

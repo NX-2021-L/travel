@@ -83,7 +83,7 @@ TRIP_COLUMNS = [
     _col("nights", "nights", "number", align="end"), _col("nights_exact", "nights exact", "boolean"),
     _col("state", "state", "enum", _options("state")),
     _col("places_visited", "places visited", "json", default_hidden=True),
-    _col("flags", "flags", "json"), _col("signals", "signals", "json"),
+    _col("flags", "flags", "json", default_hidden=True), _col("signals", "signals", "json", default_hidden=True),
     _col("legs", "legs", "json", default_hidden=True), _col("stays", "stays", "json", default_hidden=True),
     _col("rentals", "rentals", "json", default_hidden=True),
     _col("corrections", "corrections", "json", default_hidden=True),
