@@ -272,6 +272,40 @@ def _version(values) -> str:
     return _vintage(values)
 
 
+# RowSourceRef.label (kit lane 2Y, the W2b kit release; FLY-TSK-093): the chip text for each record a trip came from,
+# in canvas A7.7's readable words ("flight · 2026-11-06", "stay · 3 nights", "car rental · 2 days", "drive · <date>"; never
+# a place, which the trip label carries), from the trip's own legs, stays and rentals. A record the trip lists with none of them is served without a label. Served only once think is live on W2b.
+SERVE_SOURCE_LABELS = False
+_KIND_WORDS = {"flight": "flight", "drive": "drive"}  # movements; stays and rentals are counted below
+
+
+def _count(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def _days_between(a, b):
+    try:
+        return (date.fromisoformat(str(b)[:10]) - date.fromisoformat(str(a)[:10])).days
+    except (TypeError, ValueError):
+        return None
+
+
+def source_labels(t) -> dict:
+    out = {}
+    for leg in t.get("legs") or []:
+        if leg.get("record_id") and leg.get("date"):
+            out[str(leg["record_id"])] = f"{_KIND_WORDS.get(leg.get('kind'), leg.get('kind'))} · {leg['date']}"
+    for stay in t.get("stays") or []:
+        n = _days_between(stay.get("first_night"), stay.get("checkout"))
+        if stay.get("record_id") and n is not None:
+            out[str(stay["record_id"])] = f"stay · {_count(n, 'night', 'nights')}"
+    for car in t.get("rentals") or []:
+        n = _days_between(car.get("pickup_date"), car.get("dropoff_date"))
+        if car.get("record_id") and n is not None:
+            out[str(car["record_id"])] = f"car rental · {_count(max(n, 1), 'day', 'days')}"
+    return out
+
+
 def _trip_row(t) -> dict:
     values = {c["id"]: t.get(c["id"]) for c in TRIP_COLUMNS}
     values["place"] = t.get("place") or PLACE_UNKNOWN
@@ -280,7 +314,9 @@ def _trip_row(t) -> dict:
     values["nights_hint"] = NIGHTS_HINT[bool(t.get("nights_exact"))]
     # Contract amendment 1: `sources` names every travel record the trip was built from, one {recordset, key} per record;
     # `source` is the deprecated alias for the first of them (null when the trip has no lineage).
-    sources = [{"recordset": SOURCE_SET, "key": str(rid)} for rid in (t.get("record_ids") or [])]
+    labels = source_labels(t) if SERVE_SOURCE_LABELS else {}
+    sources = [{"recordset": SOURCE_SET, "key": str(rid), **({"label": labels[str(rid)]} if str(rid) in labels else {})}
+               for rid in (t.get("record_ids") or [])]
     return {"key": t["key"], "version": _version(values), "values": values,
             "sources": sources, "source": sources[0] if sources else None}
 
