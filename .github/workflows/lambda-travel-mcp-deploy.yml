@@ -43,7 +43,7 @@ on:
         required: false
         default: ""
       force_nana_verify_fail:
-        description: "DRILL: make one check on HER deployment fail on purpose, so hers and then io's are undone (run in a window io has agreed)"
+        description: "DRILL: make one check on HER deployment fail on purpose, so hers alone is undone; io's is not touched (amendment A3), so no window with io is needed"
         type: boolean
         default: false
       rollback_nana_to_version:
