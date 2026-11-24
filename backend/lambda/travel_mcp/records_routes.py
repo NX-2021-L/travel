@@ -77,10 +77,16 @@ def _options(vocab):
 
 
 TRIP_COLUMNS = [
-    _col("key", "trip", "text"),
-    _col("first_date", "first date", "date"), _col("first_basis", "first date basis", "enum", _options("basis")),
-    _col("last_date", "last date", "date"), _col("last_basis", "last date basis", "enum", _options("basis")),
-    _col("nights", "nights", "number", align="end"), _col("nights_exact", "nights exact", "boolean"),
+    # place (FLY-TSK-091, canvas A6.3): the trip's places in its own records' words, "unknown" when it visited none; the
+    # key stays the identity and is drawn under it. The *_hint columns carry the canvas A6.4 words drawn under a date or
+    # nights; the basis enum and nights_exact stay served, and a host that draws the hints needs no column for them.
+    _col("place", "trip", "text"), _col("key", "key", "text"),
+    _col("first_date", "first date", "date"), _col("first_hint", "first date, how known", "text", default_hidden=True),
+    _col("first_basis", "first date basis", "enum", _options("basis")),
+    _col("last_date", "last date", "date"), _col("last_hint", "last date, how known", "text", default_hidden=True),
+    _col("last_basis", "last date basis", "enum", _options("basis")),
+    _col("nights", "nights", "number", align="end"), _col("nights_hint", "nights, exact or not", "text", default_hidden=True),
+    _col("nights_exact", "nights exact", "boolean"),
     _col("state", "state", "enum", _options("state")),
     _col("places_visited", "places visited", "json", default_hidden=True),
     _col("flags", "flags", "json", default_hidden=True), _col("signals", "signals", "json", default_hidden=True),
@@ -89,18 +95,56 @@ TRIP_COLUMNS = [
     _col("corrections", "corrections", "json", default_hidden=True),
     _col("record_ids", "record ids", "json", default_hidden=True),
 ]
+# Canvas A6.4: the words under a date, read from the engine's basis, rule and what set a recorded boundary.
+_RECORDED_BY = {"flight": "from a flight", "drive": "from a drive", "correction": "from a correction"}
+NIGHTS_HINT = {True: "exact", False: "not exact"}
+
+
+def date_hint(basis, rule, by):
+    if basis == "recorded":
+        return _RECORDED_BY.get(by, "recorded")
+    if basis == "derived":
+        return "from a stay" if rule == "from_lodging" else "inferred"
+    return "not settled"
+
+
 CORRECTION_COLUMNS = [
     # editable marks the fields a correction is created with (records_writes.CREATE_FIELDS); nothing is amended.
     # A retired correction is served with Row.retired true (contract 0.5.0) and its values unchanged, so the row
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
+    # Shown: the board's id, kind, date, reason and meta (created); the rest is served and hidden by default.
     _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _options("kind"), True),
-    _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date"),
-    _col("record_ids", "record ids", "json", editable=True), _col("reason", "reason", "text"),
-    _col("author", "author", "text"), _col("session", "session", "text"), _col("question_id", "question", "text", editable=True),
+    _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date", default_hidden=True),
+    _col("record_ids", "record ids", "json", editable=True, default_hidden=True), _col("reason", "reason", "text"),
+    _col("author", "author", "text", default_hidden=True), _col("session", "session", "text", default_hidden=True),
+    _col("question_id", "question", "text", editable=True, default_hidden=True),
     _col("created_at", "created", "text"),
-    _col("first_date", "first date", "date", editable=True), _col("last_date", "last date", "date", editable=True),
-    _col("method", "method", "enum", _options("method"), True), _col("supersedes", "supersedes", "json", editable=True),
+    _col("first_date", "first date", "date", editable=True, default_hidden=True),
+    _col("last_date", "last date", "date", editable=True, default_hidden=True),
+    _col("method", "method", "enum", _options("method"), True, default_hidden=True),
+    _col("supersedes", "supersedes", "json", editable=True, default_hidden=True),
 ]
+# Column.hint.under (lane 2O, the W2b kit release): the column whose value a host draws under this one's cell, as the
+# canvas pairs them. Served only once think is live on that release (a consumer on an older kit rejects the field).
+# With the hints served, the paired columns are drawn under their cells, so they and the basis enum are hidden by
+# default (still served); without them, the key and the bases show as their own columns.
+UNDER = {"place": "key", "first_date": "first_hint", "last_date": "last_hint", "nights": "nights_hint"}
+DRAWN_UNDER_INSTEAD = ("key", "first_basis", "last_basis", "nights_exact")
+SERVE_UNDER_HINTS = False
+PLACE_UNKNOWN = "unknown"
+
+
+def _trip_columns():
+    if not SERVE_UNDER_HINTS:
+        return TRIP_COLUMNS
+    out = []
+    for c in TRIP_COLUMNS:
+        if c["id"] in UNDER:
+            c = {**c, "hint": {**c.get("hint", {}), "under": UNDER[c["id"]]}}
+        elif c["id"] in DRAWN_UNDER_INSTEAD:
+            c = {**c, "hint": {**c.get("hint", {}), "default_hidden": True}}
+        out.append(c)
+    return out
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
@@ -129,11 +173,11 @@ def descriptors() -> dict:
     today = _lane()._today().isoformat()
     return {
         TRIPS: {"id": TRIPS, "title": "trips", "description": TRIPS_DESCRIPTION, "key": "key", "class": "derived", "capabilities": [], "reason": "none",
-                "collection": "client", "order": "fixed", "inputs": [{"external": SOURCE_SET, "label": "Travel records"}, CORRECTIONS],
+                "collection": "client", "order": "fixed", "inputs": [{"external": SOURCE_SET, "label": "travel records"}, CORRECTIONS],
                 "params": _params_served([{"id": "today", "type": "date", "options_from": None, "default": today},
                                           {"id": "near_home_km", "type": "number", "options_from": None,
                                            "default": _NEAR_HOME_DEFAULT}]),
-                "columns": TRIP_COLUMNS},
+                "columns": _trip_columns()},
         CORRECTIONS: {"id": CORRECTIONS, "title": "trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
                       "capabilities": ["create", "retire"], "reason": "required", "collection": "client", "order": "free",
                       "columns": CORRECTION_COLUMNS},
@@ -172,6 +216,10 @@ def _version(values) -> str:
 
 def _trip_row(t) -> dict:
     values = {c["id"]: t.get(c["id"]) for c in TRIP_COLUMNS}
+    values["place"] = t.get("place") or PLACE_UNKNOWN
+    values["first_hint"] = date_hint(t.get("first_basis"), t.get("first_rule"), t.get("first_by"))
+    values["last_hint"] = date_hint(t.get("last_basis"), t.get("last_rule"), t.get("last_by"))
+    values["nights_hint"] = NIGHTS_HINT[bool(t.get("nights_exact"))]
     # Contract amendment 1: `sources` names every travel record the trip was built from, one {recordset, key} per record;
     # `source` is the deprecated alias for the first of them (null when the trip has no lineage).
     sources = [{"recordset": SOURCE_SET, "key": str(rid)} for rid in (t.get("record_ids") or [])]

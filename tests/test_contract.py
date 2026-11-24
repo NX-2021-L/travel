@@ -136,7 +136,7 @@ def test_vocabularies():
     assert c.DISPOSITIONS == ("cancelled", "left_out", "unreadable", "at_home", "a_move", "day_out_and_back")
     assert not hasattr(c, "BASIS")  # the name is BASES
     assert c.TRIP_FIELDS == ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited",
-                             "legs", "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
+                             "place", "legs", "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
     assert c.ARCS == ("detected", "proposed", "confirmed") and c.CONFIRMATION_METHODS == ("examined", "accepted_list")
     assert c.GET_TRIP_EXTRA_FIELDS == ["first_rule", "last_rule"]
 

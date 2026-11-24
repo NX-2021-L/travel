@@ -56,7 +56,7 @@ def test_list_names_the_two_sets():
 
 def test_trips_descriptor_is_derived_fixed_with_engine_params():
     _, _, d = get("/records/recordsets/trips/descriptor")
-    assert d["class"] == "derived" and d["order"] == "fixed" and d["capabilities"] == [] and d["inputs"] == [{"external": "travel_records", "label": "Travel records"}, "trip_corrections"]
+    assert d["class"] == "derived" and d["order"] == "fixed" and d["capabilities"] == [] and d["inputs"] == [{"external": "travel_records", "label": "travel records"}, "trip_corrections"]
     assert [p["id"] for p in d["params"]] == ["today", "near_home_km"]
     assert d["params"][1]["default"] == 50.0
     assert {c["id"] for c in d["columns"]} >= {"key", "first_date", "last_date", "state", "flags"}

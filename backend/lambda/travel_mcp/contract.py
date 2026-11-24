@@ -160,7 +160,7 @@ TRIP_STATE_MEANING = {
     "past": "has ended",
 }
 TRIP_LIST_ORDER = ("under way", "upcoming", "planned", "past")  # past newest first
-TRIP_FIELDS = ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited", "legs",
+TRIP_FIELDS = ["key", "first_date", "first_basis", "last_date", "last_basis", "nights", "places_visited", "place", "legs",
                "stays", "rentals", "state", "flags", "signals", "residence_period", "corrections", "arc", "confirmation_id"]
 # What a client reads to find a correction's id (retire_trip_correction takes correction_id). Each trip's
 # `corrections` lists the ones touching it, retired included and marked; list_trips also returns every
