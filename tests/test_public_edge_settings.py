@@ -39,7 +39,7 @@ def public_env(**over):
 # ---------------------------------------------------------------- the declaration
 def test_the_five_are_required_on_the_public_door_only():
     assert {k for k, v in contract.SETTINGS.items() if v["required"] == "public"} == set(FIVE)
-    assert len(contract.SETTINGS) == 12
+    assert len(contract.SETTINGS) == 13  # MOM-TSK-028 added SECOND_ISSUER_ALLOWED_SUBS
 
 
 def test_internal_door_requires_none_of_the_five():
