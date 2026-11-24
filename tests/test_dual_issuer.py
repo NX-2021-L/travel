@@ -119,4 +119,5 @@ def test_the_neutral_second_issuer_name_is_read_first(dual, monkeypatch):
     _, iog, _ = dual
     monkeypatch.setenv("SECOND_ISSUER_ALLOWED_SUBS", "new-sub")
     assert payload(_get(_tok(iog, IOG_KID, IOG_ISS, "new-sub", IOG_CLIENT)))["success"]
-    assert not payload(_get(_tok(iog, IOG_KID, IOG_ISS, "io-sub", IOG_CLIENT))).get("success")
+    # the earlier name is only the fallback: with the neutral name set, its sub is refused at the allow-list (403)
+    assert _get(_tok(iog, IOG_KID, IOG_ISS, "io-sub", IOG_CLIENT))["statusCode"] == 403
