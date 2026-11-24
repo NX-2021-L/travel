@@ -77,35 +77,45 @@ def _options(vocab):
 
 
 TRIP_COLUMNS = [
-    _col("key", "Trip", "text"),
-    _col("first_date", "First date", "date"), _col("first_basis", "First date basis", "enum", _options("basis")),
-    _col("last_date", "Last date", "date"), _col("last_basis", "Last date basis", "enum", _options("basis")),
-    _col("nights", "Nights", "number", align="end"), _col("nights_exact", "Nights exact", "boolean"),
-    _col("state", "State", "enum", _options("state")),
-    _col("places_visited", "Places visited", "json", default_hidden=True),
-    _col("flags", "Flags", "json"), _col("signals", "Signals", "json"),
-    _col("legs", "Legs", "json", default_hidden=True), _col("stays", "Stays", "json", default_hidden=True),
-    _col("rentals", "Rentals", "json", default_hidden=True),
-    _col("corrections", "Corrections", "json", default_hidden=True),
-    _col("record_ids", "Record ids", "json", default_hidden=True),
+    _col("key", "trip", "text"),
+    _col("first_date", "first date", "date"), _col("first_basis", "first date basis", "enum", _options("basis")),
+    _col("last_date", "last date", "date"), _col("last_basis", "last date basis", "enum", _options("basis")),
+    _col("nights", "nights", "number", align="end"), _col("nights_exact", "nights exact", "boolean"),
+    _col("state", "state", "enum", _options("state")),
+    _col("places_visited", "places visited", "json", default_hidden=True),
+    _col("flags", "flags", "json"), _col("signals", "signals", "json"),
+    _col("legs", "legs", "json", default_hidden=True), _col("stays", "stays", "json", default_hidden=True),
+    _col("rentals", "rentals", "json", default_hidden=True),
+    _col("corrections", "corrections", "json", default_hidden=True),
+    _col("record_ids", "record ids", "json", default_hidden=True),
 ]
 CORRECTION_COLUMNS = [
     # editable marks the fields a correction is created with (records_writes.CREATE_FIELDS); nothing is amended.
     # A retired correction is served with Row.retired true (contract 0.5.0) and its values unchanged, so the row
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
-    _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum", _options("kind"), True),
-    _col("date", "Date", "text", editable=True), _col("date_iso", "Date (ISO)", "date"),
-    _col("record_ids", "Record ids", "json", editable=True), _col("reason", "Reason", "text"),
-    _col("author", "Author", "text"), _col("session", "Session", "text"), _col("question_id", "Question", "text", editable=True),
-    _col("created_at", "Created", "text"),
-    _col("first_date", "First date", "date", editable=True), _col("last_date", "Last date", "date", editable=True),
-    _col("method", "Method", "enum", _options("method"), True), _col("supersedes", "Supersedes", "json", editable=True),
+    _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _options("kind"), True),
+    _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date"),
+    _col("record_ids", "record ids", "json", editable=True), _col("reason", "reason", "text"),
+    _col("author", "author", "text"), _col("session", "session", "text"), _col("question_id", "question", "text", editable=True),
+    _col("created_at", "created", "text"),
+    _col("first_date", "first date", "date", editable=True), _col("last_date", "last date", "date", editable=True),
+    _col("method", "method", "enum", _options("method"), True), _col("supersedes", "supersedes", "json", editable=True),
 ]
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
 CORRECTIONS_DESCRIPTION = ("the corrections i left on trips, each with its reason. a retired one stays listed, "
                            "and its trip goes back to what the records say.")
+# Param.label arrives in the W2 kit release (lane 2H). Until travel's gate runs on that release, a served label would fail
+# the contract (Param takes no other property), so the labels are held here and switched on with the kit bump.
+PARAM_LABELS = {"today": "today", "near_home_km": "near home, km"}
+SERVE_PARAM_LABELS = False
+
+
+def _params_served(params):
+    return [{**p, "label": PARAM_LABELS[p["id"]]} if SERVE_PARAM_LABELS else p for p in params]
+
+
 _NEAR_HOME_DEFAULT = inspect.signature(trip_engine.compute_trips).parameters["near_home_km"].default
 
 
@@ -119,12 +129,13 @@ def _lane():
 def descriptors() -> dict:
     today = _lane()._today().isoformat()
     return {
-        TRIPS: {"id": TRIPS, "title": "Trips", "description": TRIPS_DESCRIPTION, "key": "key", "class": "derived", "capabilities": [], "reason": "none",
+        TRIPS: {"id": TRIPS, "title": "trips", "description": TRIPS_DESCRIPTION, "key": "key", "class": "derived", "capabilities": [], "reason": "none",
                 "collection": "client", "order": "fixed", "inputs": [{"external": SOURCE_SET, "label": "Travel records"}, CORRECTIONS],
-                "params": [{"id": "today", "type": "date", "options_from": None, "default": today},
-                           {"id": "near_home_km", "type": "number", "options_from": None, "default": _NEAR_HOME_DEFAULT}],
+                "params": _params_served([{"id": "today", "type": "date", "options_from": None, "default": today},
+                                          {"id": "near_home_km", "type": "number", "options_from": None,
+                                           "default": _NEAR_HOME_DEFAULT}]),
                 "columns": TRIP_COLUMNS},
-        CORRECTIONS: {"id": CORRECTIONS, "title": "Trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
+        CORRECTIONS: {"id": CORRECTIONS, "title": "trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
                       "capabilities": ["create", "retire"], "reason": "required", "collection": "client", "order": "free",
                       "columns": CORRECTION_COLUMNS},
     }
@@ -178,18 +189,47 @@ def _correction_row(c) -> dict:
     return row
 
 
+# One finding per code, its message a short summary (lead ruling 18:09Z, BRD canvas "Trips"): a panel shows the
+# summary, not one line per record. Finding.rows names keys of THIS response only (REC-C44), and the records a trips
+# finding speaks of are not trip rows, so no rows are listed; the summary counts them.
+_KIND_PLURAL = {"flight": "flights", "lodging": "stays", "car_rental": "car rentals", "drive": "drives"}
+_BEFORE = {"cancelled": "cancelled", "unreadable": "unreadable", "left_out": "left-out"}
+_AFTER = {"at_home": "at home", "a_move": "in a move", "day_out_and_back": "out and back in a day"}
+
+
+def _plural(n, word, many):
+    return f"{n} {word if n == 1 else many}"
+
+
+def _excluded_part(n, kind, disposition):
+    noun = _KIND_PLURAL.get(kind, f"{kind} records") if n != 1 else {"car_rental": "car rental", "lodging": "stay"}.get(kind, kind)
+    if disposition in _BEFORE:
+        return f"{n} {_BEFORE[disposition]} {noun}"
+    return f"{n} {noun} {_AFTER.get(disposition, disposition.replace('_', ' '))}"
+
+
 def _findings(result) -> list:
     out = []
-    for e in result["excluded"]:
-        out.append({"code": "excluded_record", "severity": "info",
-                    "message": f"{e['record_id']} ({e['kind']}) is not in any trip: {e['disposition']}, {e['detail']}"})
-    for c in result["unapplied_corrections"]:
-        unknown = c.get("unknown_record_ids")
-        out.append({"code": "unapplied_correction", "severity": "warn",
-                    "message": f"correction {c.get('correction_id')} ({c.get('kind')}) changed no trip"
-                               + (f"; it names records that are not held: {', '.join(unknown)}" if unknown else "")})
-    for rid in result["duplicate_inputs"]:
-        out.append({"code": "duplicate_input", "severity": "warn", "message": f"record {rid} was supplied twice and counted once"})
+    excluded = result["excluded"]
+    if excluded:
+        groups = {}
+        for e in excluded:
+            groups[(e["disposition"], e["kind"])] = groups.get((e["disposition"], e["kind"]), 0) + 1
+        parts = [_excluded_part(n, kind, disp) for (disp, kind), n in sorted(groups.items(), key=lambda g: (-g[1], g[0]))]
+        msg = f"{parts[0]} {'is' if len(excluded) == 1 else 'are'} in no trip" if len(parts) == 1 else \
+            f"{_plural(len(excluded), 'record is', 'records are')} in no trip: {', '.join(parts)}"
+        out.append({"code": "excluded_record", "severity": "info", "message": msg})
+    unapplied = result["unapplied_corrections"]
+    if unapplied:
+        unknown = sum(1 for c in unapplied if c.get("unknown_record_ids"))
+        msg = f"{_plural(len(unapplied), 'correction', 'corrections')} changed no trip"
+        if unknown:
+            msg += f"; {unknown} {'names' if unknown == 1 else 'name'} records that are not held"
+        out.append({"code": "unapplied_correction", "severity": "warn", "message": msg})
+    dup = result["duplicate_inputs"]
+    if dup:
+        out.append({"code": "duplicate_input", "severity": "warn",
+                    "message": f"{_plural(len(dup), 'record was', 'records were')} supplied twice and counted once"})
     return out
 
 

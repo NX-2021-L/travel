@@ -85,10 +85,35 @@ def test_trips_rows_are_the_engine_in_listing_order_with_lineage():
 def test_trips_findings_carry_exclusions_unapplied_and_duplicates():
     _, _, body = get("/records/recordsets/trips/rows")
     assert {f["code"] for f in body["findings"]} == {"excluded_record", "unapplied_correction", "duplicate_input"}
-    assert any("F-GONE" in f["message"] and "cancelled" in f["message"] for f in body["findings"])
-    assert any("C-GHOST" in f["message"] and "F-NOWHERE" in f["message"] for f in body["findings"])
-    assert any("F-OUT1" in f["message"] for f in body["findings"] if f["code"] == "duplicate_input")
+    # FLY-TSK-089 (lead ruling 18:09Z): one finding per code, a short summary; no rows (they are not trip rows, REC-C44)
+    by = {f["code"]: f for f in body["findings"]}
+    assert len(body["findings"]) == 3 and all("rows" not in f for f in body["findings"])
+    assert by["excluded_record"]["message"] == "1 cancelled flight is in no trip"
+    assert by["unapplied_correction"]["message"] == "1 correction changed no trip; 1 names records that are not held"
+    assert by["duplicate_input"]["message"] == "1 record was supplied twice and counted once"
     assert all(f["severity"] in ("info", "warn", "error") for f in body["findings"])
+
+
+def test_findings_summarise_many_records_in_one_line_per_code():
+    ex = [{"record_id": f"F-X{i}", "kind": "flight", "disposition": "cancelled", "detail": ""} for i in range(3)]
+    ex += [{"record_id": f"drive-{i}", "kind": "drive", "disposition": "at_home", "detail": ""} for i in range(2)]
+    out = rr._findings({"excluded": ex, "unapplied_corrections": [{"correction_id": "C-A"}, {"correction_id": "C-B"}],
+                        "duplicate_inputs": ["F-X0", "F-X1"]})
+    assert [f["message"] for f in out] == ["5 records are in no trip: 3 cancelled flights, 2 drives at home",
+                                           "2 corrections changed no trip", "2 records were supplied twice and counted once"]
+    only = rr._findings({"excluded": ex[:3], "unapplied_corrections": [], "duplicate_inputs": []})
+    assert [f["message"] for f in only] == ["3 cancelled flights are in no trip"]
+
+
+def test_labels_are_lowercase_at_the_source_and_param_labels_wait_for_the_kit():
+    for d in rr.descriptors().values():
+        assert d["title"] == d["title"].lower() and d["description"] == d["description"].lower()
+        for c in d["columns"]:
+            assert c["label"] == c["label"].lower()
+            assert all(o["label"] == o["label"].lower() for o in c.get("options", []))
+    assert rr.PARAM_LABELS == {"today": "today", "near_home_km": "near home, km"}
+    assert rr.SERVE_PARAM_LABELS is False  # Param.label is not in the contract travel's gate runs on yet (lane 2H)
+    assert all("label" not in p for p in rr.descriptors()["trips"]["params"])
 
 
 def test_trips_params_change_the_computation():
