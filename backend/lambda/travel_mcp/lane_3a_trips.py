@@ -135,8 +135,9 @@ def _attach_retired(trips, retired):
                              for c in retired if ids & set(c["record_ids"])]
 
 
-async def _compute():
-    today = _today()
+async def _compute(today=None, near_home_km=None):
+    """today / near_home_km: optional overrides of the engine's set-level parameters (the /records routes pass them)."""
+    today = today or _today()
     records = await asyncio.to_thread(_records)
     lo, hi = _window(records, today)
     try:
@@ -150,7 +151,8 @@ async def _compute():
     except lane_2e_corrections._Fail as exc:
         raise _Refuse("missing", str(exc))
     try:
-        result = trip_engine.compute_trips(records, _periods(read), today=today, home_places=places, corrections=corrections)
+        extra = {} if near_home_km is None else {"near_home_km": near_home_km}
+        result = trip_engine.compute_trips(records, _periods(read), today=today, home_places=places, corrections=corrections, **extra)
         _attach_retired(result["trips"], [c for c in every if c["status"] != "active"])
         result["all_corrections"] = [{k: c.get(k) for k in contract.CORRECTION_READ_FIELDS} for c in every]
         return result, today
