@@ -140,6 +140,14 @@ jobs:
           [ "$STATE" = "Active Successful " ] || [ "$STATE" = "Active Successful" ] || { echo "CHECK FAILED: function state ($STATE)"; fail=1; }
           aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" \
             --query 'FunctionUrl' --output text >/dev/null || { echo "CHECK FAILED: function url config"; fail=1; }
+          # FLY-ISS-005: a browser origin from CORS_ORIGINS gets exactly one access-control-allow-origin (no token
+          # needed: the 401 carries the CORS headers too). Two means the Function URL has a CORS config again.
+          probe_origin="${CORS_ORIGINS%%,*}"
+          for route in /records/recordsets /mcp; do
+            n=$(curl -s -o /dev/null -D - -H "Origin: ${probe_origin}" "${PUBLIC_BASE_URL}${route}" \
+                | grep -ci '^access-control-allow-origin:' || true)
+            [ "$n" = "1" ] || { echo "CHECK FAILED: ${route} sent ${n} access-control-allow-origin headers (want 1)"; fail=1; }
+          done
           python3 scripts/emit_caps.py --check || { echo "CHECK FAILED: emit_caps --check"; fail=1; }
           # Token-free: reads the DEPLOYED $LATEST artifact (after apply) via lambda:GetFunction.
           python3 scripts/verify_deployed_package.py || { echo "CHECK FAILED: deployed package"; fail=1; }

@@ -163,7 +163,6 @@ if ! aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --reg
     aws lambda create-function-url-config \
         --function-name "${FUNCTION_NAME}" \
         --auth-type NONE \
-        --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"],"AllowCredentials":true,"MaxAge":3600}' \
         --region "${REGION}" \
         --output text --query 'FunctionUrl'
 
@@ -175,6 +174,17 @@ if ! aws lambda get-function-url-config --function-name "${FUNCTION_NAME}" --reg
         --function-url-auth-type NONE \
         --region "${REGION}" 2>/dev/null || true
 fi
+
+# FLY-ISS-005: the handler is the ONLY source of CORS headers (CORS_ORIGINS allow-list, preflight included).
+# A CORS config on the Function URL adds a second access-control-allow-origin to every response, which browsers
+# reject. Clear it on every public deploy; the verify step checks that one header comes back.
+log "Clearing Function URL CORS (the handler answers CORS)..."
+aws lambda update-function-url-config \
+    --function-name "${FUNCTION_NAME}" \
+    --cors '{}' \
+    --region "${REGION}" \
+    --output text --query 'FunctionUrl' \
+    || log "WARN: could not clear Function URL CORS; verify will report a doubled header"
 
 FUNC_URL=$(aws lambda get-function-url-config \
     --function-name "${FUNCTION_NAME}" \
