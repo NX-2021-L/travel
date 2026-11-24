@@ -25,7 +25,10 @@ import lane_2e_corrections as corrections
 SET = "trip_corrections"
 REFRESHED = [SET, "trips"]
 UNDO_WINDOW = timedelta(seconds=300)
-CREATE_FIELDS = ("kind", "date", "record_ids", "first_date", "last_date", "method", "supersedes", "question_id")
+# Canvas A7.7 (FLY-TSK-092): the panel never asks for method, supersedes or question_id. A confirmation made through
+# this door is "examined"; supersedes and question_id belong to the question flow (the MCP tools), not this door.
+CREATE_FIELDS = ("kind", "date", "record_ids", "first_date", "last_date")
+DOOR_CONFIRMATION_METHOD = "examined"
 _STATUS = {"invalid": 422, "missing": 404, "not_allowed": 403, "duplicate": 422}
 
 
@@ -120,7 +123,10 @@ def _create(routes, intent, caller, key):
     extra = sorted(set(patch) - set(CREATE_FIELDS))
     if extra:
         raise Refusal(422, "Write refused", f"{extra[0]} is not a field a correction is created with.", extra[0])
-    c = _call(corrections.record_trip_correction, {**patch, "reason": intent["reason"]}, caller, door="human", idempotency_key=key)
+    args = {**patch, "reason": intent["reason"]}
+    if patch.get("kind") == "confirmed":
+        args["method"] = DOOR_CONFIRMATION_METHOD
+    c = _call(corrections.record_trip_correction, args, caller, door="human", idempotency_key=key)
     undo, _ = _undo_for(c, {"idempotency_key": key}, caller)
     return _receipt(routes, [routes._correction_row(c)], undo)
 
@@ -135,7 +141,7 @@ def _same_create(held, intent, caller):
             "reason": intent.get("reason"), "author": caller}
     have = {"kind": held.get("kind"), "date": held.get("date"), "record_ids": sorted(held.get("record_ids") or []),
             "reason": held.get("reason"), "author": held.get("author")}
-    extra = {k: patch.get(k) for k in ("first_date", "last_date", "method", "question_id") if patch.get(k) is not None}
+    extra = {k: patch.get(k) for k in ("first_date", "last_date") if patch.get(k) is not None}
     return want == have and all(held.get(k) == v for k, v in extra.items()) and not (set(patch) - set(CREATE_FIELDS))
 
 

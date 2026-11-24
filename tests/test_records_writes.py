@@ -248,9 +248,10 @@ def test_an_mcp_write_is_served_as_the_agent_door(world):
     ({"kind": "returned", "record_ids": ["F-BACK1"]}, "fixture", "date"),
     ({"kind": "left", "record_ids": ["F-OUT1"]}, "fixture", "date"),
     ({"kind": "together", "record_ids": ["F-OUT1"]}, "fixture", "record_ids"),
-    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "last_date": "2024-10-08", "method": "examined"}, "fixture", "first_date"),
-    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "first_date": "2024-10-01", "method": "examined"}, "fixture", "last_date"),
-    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "first_date": "2024-10-01", "last_date": "2024-10-08"}, "fixture", "method"),
+    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "last_date": "2024-10-08"}, "fixture", "first_date"),
+    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "first_date": "2024-10-01"}, "fixture", "last_date"),
+    ({"kind": "confirmed", "record_ids": ["F-OUT1"], "first_date": "2024-10-01", "last_date": "2024-10-08",
+      "method": "examined"}, "fixture", "method"),  # A7.7: the door sets method; it is not a field it takes
     ({"kind": "sideways", "record_ids": ["F-OUT1"]}, "fixture", "kind"),
     ({"kind": "leave_out", "record_ids": ["F-NOWHERE"]}, "fixture", "record_ids"),
     ({**RETURNED, "status": "retired"}, "fixture", "status"),
@@ -305,3 +306,10 @@ def test_the_writes_log_is_oldest_first():
     create(patch={"kind": "leave_out", "record_ids": ["F-OUT2"]}, key="fixture-key-b")
     log = writes()
     assert [e["idempotency_key"] for e in log] == ["fixture-key-a", "fixture-key-b"] and log[0]["key"] == first["key"]
+
+
+def test_a_confirmation_through_the_door_is_examined(world):
+    status, rc = create(patch={"kind": "confirmed", "record_ids": ["F-OUT1"], "first_date": "2024-10-01",
+                               "last_date": "2024-10-08"}, reason="fixture")
+    assert status == 200 and rc["status"] == "applied", rc
+    assert rc["rows"][0]["values"]["method"] == "examined"
