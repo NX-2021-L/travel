@@ -76,18 +76,17 @@ def _options(vocab):
     return [{"value": v, "label": glosses[v]} for v in _VALUES[vocab]]
 
 
-# Option.fields and Option.description (lane 2P, DVP-TSK-M32-0D, the W2b kit release; FLY-TSK-092): each correction
-# kind names the columns its create needs, matching lane_2e_corrections._validate (returned and left need a date;
-# together needs two or more records; confirmed takes the confirmed-only fields; every kind names its records). A form
-# shows only these, so the "correct this trip" panel offers just the field a kind needs. The meaning moves to
-# description and the label is the kind's own word. Served only once think is live on that release.
+# Option.fields (lane 2P, io-kit PR 327, the W2b kit release; FLY-TSK-092): each correction kind names the columns its
+# create needs, matching lane_2e_corrections._validate (returned and left need a date; every kind names its records,
+# or the panel neither shows nor sends them; confirmed takes the confirmed-only fields and the question it answers). A
+# form shows only these plus the columns no kind names (kind and reason), so the "correct this trip" panel offers just
+# the fields a kind needs. The Travel board (canvas v24+) draws each kind as its value in mono with the gloss as its
+# label and no description, so none is served. Served only once think is live on that release.
 KIND_FIELDS = {
     "returned": ["date", "record_ids"], "left": ["date", "record_ids"], "together": ["record_ids"],
     "leave_out": ["record_ids"],
     "confirmed": ["record_ids", "first_date", "last_date", "method", "supersedes", "question_id"],
 }
-KIND_LABELS = {"returned": "returned", "left": "left", "together": "together", "leave_out": "leave out",
-               "confirmed": "confirmed"}
 SERVE_OPTION_FIELDS = False
 
 
@@ -95,10 +94,9 @@ def _kind_options():
     opts = _options("kind")
     if not SERVE_OPTION_FIELDS:
         return opts
-    if set(KIND_FIELDS) != set(KIND_LABELS) or set(KIND_FIELDS) != {o["value"] for o in opts}:
+    if set(KIND_FIELDS) != {o["value"] for o in opts}:
         raise RuntimeError("records kind fields do not match the contract's correction kinds")
-    return [{"value": o["value"], "label": KIND_LABELS[o["value"]], "description": o["label"],
-             "fields": list(KIND_FIELDS[o["value"]])} for o in opts]
+    return [{**o, "fields": list(KIND_FIELDS[o["value"]])} for o in opts]
 
 
 TRIP_COLUMNS = [
