@@ -26,6 +26,7 @@ import sys
 import urllib.parse
 from datetime import date
 
+import contract
 import lane_2e_corrections
 import records_door
 import trip_engine
@@ -38,19 +39,45 @@ SOURCE_SET = "travel_records"  # lineage target: the underlying travel records; 
 TRIPS, CORRECTIONS = "trips", "trip_corrections"
 
 
-def _col(id_, label, type_, **hint):
+def _col(id_, label, type_, options=None, **hint):
     c = {"id": id_, "label": label, "type": type_, "editable": False}
+    if options is not None:
+        c["options"] = options
     if hint:
         c["hint"] = hint
     return c
 
 
+# Inline options (FLY-TSK-088, BRD DOC-D14184D324F0 6.7): every enum column serves its values with travel's own glosses.
+# The values come from the contract's vocabularies, so a value added there without a gloss fails the import, not a view.
+# Wording: the design canvas's Travel board (lowercase is in the strings, never CSS).
+_GLOSSES = {
+    "kind": {"returned": "i came home on a date no record shows", "left": "i set out on a date no record shows",
+             "together": "these records are one trip", "leave_out": "this is not a trip",
+             "confirmed": "the engine has it right. stop asking."},
+    "status": {"active": "in force", "retired": "retired"},
+    "method": {"examined": "looked at the records", "accepted_list": "accepted from the list"},
+    "basis": {"recorded": "a record shows it", "derived": "worked out by a rule", "undecided": "not settled"},
+    "state": {"under way": "under way", "upcoming": "upcoming", "planned": "planned, dates not settled", "past": "past"},
+}
+_VALUES = {"kind": contract.CORRECTION_KINDS, "status": contract.CORRECTION_STATUSES, "method": contract.CONFIRMATION_METHODS,
+           "basis": contract.BASES, "state": tuple(trip_engine.STATE_ORDER)}
+
+
+def _options(vocab):
+    glosses = _GLOSSES[vocab]
+    missing = [v for v in _VALUES[vocab] if v not in glosses]
+    if missing or set(glosses) - set(_VALUES[vocab]):
+        raise RuntimeError(f"records options for {vocab} do not match the contract: {sorted(set(glosses) ^ set(_VALUES[vocab]))}")
+    return [{"value": v, "label": glosses[v]} for v in _VALUES[vocab]]
+
+
 TRIP_COLUMNS = [
     _col("key", "Trip", "text"),
-    _col("first_date", "First date", "date"), _col("first_basis", "First date basis", "enum"),
-    _col("last_date", "Last date", "date"), _col("last_basis", "Last date basis", "enum"),
+    _col("first_date", "First date", "date"), _col("first_basis", "First date basis", "enum", _options("basis")),
+    _col("last_date", "Last date", "date"), _col("last_basis", "Last date basis", "enum", _options("basis")),
     _col("nights", "Nights", "number", align="end"), _col("nights_exact", "Nights exact", "boolean"),
-    _col("state", "State", "enum"),
+    _col("state", "State", "enum", _options("state")),
     _col("places_visited", "Places visited", "json", default_hidden=True),
     _col("flags", "Flags", "json"), _col("signals", "Signals", "json"),
     _col("legs", "Legs", "json", default_hidden=True), _col("stays", "Stays", "json", default_hidden=True),
@@ -59,14 +86,19 @@ TRIP_COLUMNS = [
     _col("record_ids", "Record ids", "json", default_hidden=True),
 ]
 CORRECTION_COLUMNS = [
-    _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum"), _col("status", "Status", "enum"),
+    _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum", _options("kind")), _col("status", "Status", "enum", _options("status")),
     _col("date", "Date", "text"), _col("date_iso", "Date (ISO)", "date"),
     _col("record_ids", "Record ids", "json"), _col("reason", "Reason", "text"),
     _col("author", "Author", "text"), _col("session", "Session", "text"), _col("question_id", "Question", "text"),
     _col("created_at", "Created", "text"), _col("retired_at", "Retired", "text"), _col("retired_by", "Retired by", "text"),
     _col("first_date", "First date", "date"), _col("last_date", "Last date", "date"),
-    _col("method", "Method", "enum"), _col("supersedes", "Supersedes", "json"),
+    _col("method", "Method", "enum", _options("method")), _col("supersedes", "Supersedes", "json"),
 ]
+# Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
+TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
+                     "i don't edit the trip. i leave a correction, and the trip is derived again.")
+CORRECTIONS_DESCRIPTION = ("the corrections i left on trips, each with its reason. a retired one stays listed, "
+                           "and its trip goes back to what the records say.")
 _NEAR_HOME_DEFAULT = inspect.signature(trip_engine.compute_trips).parameters["near_home_km"].default
 
 
@@ -80,12 +112,12 @@ def _lane():
 def descriptors() -> dict:
     today = _lane()._today().isoformat()
     return {
-        TRIPS: {"id": TRIPS, "title": "Trips", "key": "key", "class": "derived", "capabilities": [], "reason": "none",
+        TRIPS: {"id": TRIPS, "title": "Trips", "description": TRIPS_DESCRIPTION, "key": "key", "class": "derived", "capabilities": [], "reason": "none",
                 "collection": "client", "order": "fixed", "inputs": [{"external": SOURCE_SET, "label": "Travel records"}, CORRECTIONS],
                 "params": [{"id": "today", "type": "date", "options_from": None, "default": today},
                            {"id": "near_home_km", "type": "number", "options_from": None, "default": _NEAR_HOME_DEFAULT}],
                 "columns": TRIP_COLUMNS},
-        CORRECTIONS: {"id": CORRECTIONS, "title": "Trip corrections", "key": "correction_id", "class": "amend_with_audit",
+        CORRECTIONS: {"id": CORRECTIONS, "title": "Trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
                       "capabilities": [], "reason": "none", "collection": "client", "order": "free",
                       "columns": CORRECTION_COLUMNS},
     }
