@@ -76,6 +76,31 @@ def _options(vocab):
     return [{"value": v, "label": glosses[v]} for v in _VALUES[vocab]]
 
 
+# Option.fields and Option.description (lane 2P, DVP-TSK-M32-0D, the W2b kit release; FLY-TSK-092): each correction
+# kind names the columns its create needs, matching lane_2e_corrections._validate (returned and left need a date;
+# together needs two or more records; confirmed takes the confirmed-only fields; every kind names its records). A form
+# shows only these, so the "correct this trip" panel offers just the field a kind needs. The meaning moves to
+# description and the label is the kind's own word. Served only once think is live on that release.
+KIND_FIELDS = {
+    "returned": ["date", "record_ids"], "left": ["date", "record_ids"], "together": ["record_ids"],
+    "leave_out": ["record_ids"],
+    "confirmed": ["record_ids", "first_date", "last_date", "method", "supersedes", "question_id"],
+}
+KIND_LABELS = {"returned": "returned", "left": "left", "together": "together", "leave_out": "leave out",
+               "confirmed": "confirmed"}
+SERVE_OPTION_FIELDS = False
+
+
+def _kind_options():
+    opts = _options("kind")
+    if not SERVE_OPTION_FIELDS:
+        return opts
+    if set(KIND_FIELDS) != set(KIND_LABELS) or set(KIND_FIELDS) != {o["value"] for o in opts}:
+        raise RuntimeError("records kind fields do not match the contract's correction kinds")
+    return [{"value": o["value"], "label": KIND_LABELS[o["value"]], "description": o["label"],
+             "fields": list(KIND_FIELDS[o["value"]])} for o in opts]
+
+
 TRIP_COLUMNS = [
     # place (FLY-TSK-091, canvas A6.3): the trip's places in its own records' words, "unknown" when it visited none; the
     # key stays the identity and is drawn under it. The *_hint columns carry the canvas A6.4 words drawn under a date or
@@ -114,7 +139,7 @@ CORRECTION_COLUMNS = [
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
     # Shown: the board's id, kind, date, reason and meta (canvas A6.7, A7.7); the rest is served and hidden by default.
     # meta is the line under the reason: "session · YYYY-MM-DD HH:MM", or the time alone when no session is served.
-    _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _options("kind"), True),
+    _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _kind_options(), True),
     _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date", default_hidden=True),
     _col("record_ids", "record ids", "json", editable=True, default_hidden=True), _col("reason", "reason", "text"),
     _col("meta", "meta", "text"),
@@ -164,7 +189,8 @@ def _trip_columns():
 
 
 def _correction_columns():
-    return _hinted(CORRECTION_COLUMNS, CORRECTION_UNDER)
+    cols = [{**c, "options": _kind_options()} if c["id"] == "kind" else c for c in CORRECTION_COLUMNS]
+    return _hinted(cols, CORRECTION_UNDER)
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
