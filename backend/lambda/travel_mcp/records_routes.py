@@ -1,18 +1,22 @@
-"""Read-only @io-kit/records routes (FLY-TSK-083, FLY-FTR-004): travel proves the records contract is general.
+"""@io-kit/records routes (FLY-TSK-083, FLY-FTR-004; write half FLY-TSK-087): travel proves the records contract is general.
 
-  GET /records/recordsets
-  GET /records/recordsets/{id}/descriptor
-  GET /records/recordsets/{id}/rows       [?today=YYYY-MM-DD&near_home_km=N for trips] [?limit=N&cursor=...]
+  GET  /records/recordsets
+  GET  /records/recordsets/{id}/descriptor
+  GET  /records/recordsets/{id}/rows       [?today=YYYY-MM-DD&near_home_km=N for trips] [?limit=N&cursor=...]
+  GET  /records/recordsets/{id}/writes     the corrections' create and retire events (records_writes)
+  POST /records/recordsets/trip_corrections/intents   create | retire | undo, through the two tool handlers only
 
 Two sets, both served from what the tools already read; there is no business logic here, only shape:
   trips             class derived, order fixed. Rows are lane_3a_trips._compute (trip_engine.compute_trips) ordered by
                     trip_engine.order_trips_for_listing. Params are the engine's set-level parameters (today, near_home_km).
                     Each row's source lists its record ids; excluded records, unapplied corrections and duplicate inputs
                     are findings.
-  trip_corrections  class amend_with_audit, NO capabilities (travel writes corrections through its tools, not here):
-                    lane_2e_corrections.load_corrections, retired ones included.
+  trip_corrections  class amend_with_audit, capabilities create and retire, reason required: lane_2e_corrections.
+                    load_corrections, retired ones included. Writes go through record_trip_correction and
+                    retire_trip_correction (records_writes); this module writes nothing itself.
 
-Auth: a human-door token only (records_door.authenticate). Every refusal, descriptors included, is the same 401 problem.
+Auth: a human-door token only (records_door.authenticate), any think sign-in (io, 2026-11-24: "Any think sign-in"; no
+per-subject list). Every refusal, descriptors included, is the same 401 problem.
 The routes are not tools: they never appear in tools/list, caps.json or the permission manifest (ui_only).
 Responses carry no ids or values of any deployment beyond the rows the caller is entitled to read.
 """
@@ -29,6 +33,7 @@ from datetime import date
 import contract
 import lane_2e_corrections
 import records_door
+import records_writes
 import trip_engine
 
 PREFIX = "/records"
@@ -39,8 +44,8 @@ SOURCE_SET = "travel_records"  # lineage target: the underlying travel records; 
 TRIPS, CORRECTIONS = "trips", "trip_corrections"
 
 
-def _col(id_, label, type_, options=None, **hint):
-    c = {"id": id_, "label": label, "type": type_, "editable": False}
+def _col(id_, label, type_, options=None, editable=False, **hint):
+    c = {"id": id_, "label": label, "type": type_, "editable": editable}
     if options is not None:
         c["options"] = options
     if hint:
@@ -86,13 +91,15 @@ TRIP_COLUMNS = [
     _col("record_ids", "Record ids", "json", default_hidden=True),
 ]
 CORRECTION_COLUMNS = [
-    _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum", _options("kind")), _col("status", "Status", "enum", _options("status")),
-    _col("date", "Date", "text"), _col("date_iso", "Date (ISO)", "date"),
-    _col("record_ids", "Record ids", "json"), _col("reason", "Reason", "text"),
-    _col("author", "Author", "text"), _col("session", "Session", "text"), _col("question_id", "Question", "text"),
+    # editable marks the fields a correction is created with (records_writes.CREATE_FIELDS); nothing is amended.
+    _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum", _options("kind"), True),
+    _col("status", "Status", "enum", _options("status")),
+    _col("date", "Date", "text", editable=True), _col("date_iso", "Date (ISO)", "date"),
+    _col("record_ids", "Record ids", "json", editable=True), _col("reason", "Reason", "text"),
+    _col("author", "Author", "text"), _col("session", "Session", "text"), _col("question_id", "Question", "text", editable=True),
     _col("created_at", "Created", "text"), _col("retired_at", "Retired", "text"), _col("retired_by", "Retired by", "text"),
-    _col("first_date", "First date", "date"), _col("last_date", "Last date", "date"),
-    _col("method", "Method", "enum", _options("method")), _col("supersedes", "Supersedes", "json"),
+    _col("first_date", "First date", "date", editable=True), _col("last_date", "Last date", "date", editable=True),
+    _col("method", "Method", "enum", _options("method"), True), _col("supersedes", "Supersedes", "json", editable=True),
 ]
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
@@ -118,7 +125,7 @@ def descriptors() -> dict:
                            {"id": "near_home_km", "type": "number", "options_from": None, "default": _NEAR_HOME_DEFAULT}],
                 "columns": TRIP_COLUMNS},
         CORRECTIONS: {"id": CORRECTIONS, "title": "Trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
-                      "capabilities": [], "reason": "none", "collection": "client", "order": "free",
+                      "capabilities": ["create", "retire"], "reason": "required", "collection": "client", "order": "free",
                       "columns": CORRECTION_COLUMNS},
     }
 
@@ -272,15 +279,23 @@ def handle(event, environ=None):
     if method == "OPTIONS":  # CORS preflight carries no credential
         return {"statusCode": 204, "headers": {}, "body": "", "isBase64Encoded": False}
     try:
-        records_door.authenticate(event.get("headers"), environ)
+        claims = records_door.authenticate(event.get("headers"), environ)
     except records_door.DoorTokenError as exc:
         print(json.dumps({"records_door_refused": exc.reason}), file=sys.stderr)
         return unauthorized()
-    if method != "GET":
-        return problem(405, "Method not allowed", extra={"allow": "GET"})
     parts = _path(event)[len(PREFIX):].strip("/").split("/")
     sets = descriptors()
+    if method == "POST" and len(parts) == 3 and parts[0] == "recordsets" and parts[1] in sets and parts[2] == "intents":
+        try:
+            return records_writes.intent(sys.modules[__name__], parts[1], event, claims)
+        except Exception as exc:  # noqa: BLE001 - a store outage: a problem, never a stack
+            print(json.dumps({"records_write_error": type(exc).__name__}), file=sys.stderr)
+            return problem(503, "Records unavailable", "The write could not be made.")
+    if method != "GET":
+        return problem(405, "Method not allowed", extra={"allow": "GET, POST" if parts[-1:] == ["intents"] else "GET"})
     try:
+        if len(parts) == 3 and parts[0] == "recordsets" and parts[1] == records_writes.SET and parts[2] == "writes":
+            return _resp(200, records_writes.writes(sys.modules[__name__], parts[1], claims))
         if parts == ["recordsets"]:
             return _resp(200, [{"id": d["id"], "title": d["title"]} for d in sets.values()])
         if len(parts) == 3 and parts[0] == "recordsets" and parts[1] in sets and parts[2] == "descriptor":

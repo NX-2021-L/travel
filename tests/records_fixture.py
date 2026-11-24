@@ -1,7 +1,7 @@
 """Synthetic world for the /records routes (FLY-TSK-083): fake records, a fake door key, a patched trip source.
 
 No person's data: every id, place and date is invented. `install(monkeypatch=None)` replaces the two reads the routes
-make (lane_3a_trips._compute, lane_2e_corrections.load_corrections) with the REAL trip engine over these records, so the
+make (lane_3a_trips._compute, lane_2e_corrections.load_corrections and .load_correction_audit) with the REAL trip engine over these records, so the
 routes serve real engine output. Used by tests/test_records_routes.py and tests/records_local_server.py.
 """
 import json
@@ -84,7 +84,8 @@ def install(monkeypatch=None):
         return [c for c in CORRECTIONS if include_retired or c["status"] == "active"]
 
     patches = [(lane_3a_trips, "_compute", compute), (lane_3a_trips, "_today", lambda: __import__("datetime").date.fromisoformat(TODAY)),
-               (lane_2e_corrections, "load_corrections", load)]
+               (lane_2e_corrections, "load_corrections", load),
+               (lane_2e_corrections, "load_correction_audit", lambda table=None: {})]  # FLY-TSK-087: the writes log
     if monkeypatch is not None:
         for mod, name, fn in patches:
             monkeypatch.setattr(mod, name, fn)

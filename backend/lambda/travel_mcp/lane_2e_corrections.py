@@ -20,6 +20,7 @@ Scan filtered on it), so a correction row has kind="correction" and keeps the co
 
 Nothing in this module deletes an item (tests/test_lane_2e_corrections.py proves it).
 """
+import json
 import os
 import sys
 from datetime import date as _date, datetime, timezone
@@ -49,9 +50,43 @@ def _now():
 
 
 class _Fail(Exception):
-    def __init__(self, code, message):
+    def __init__(self, code, message, field=None):
         super().__init__(message)
-        self.code, self.message = code, message
+        self.code, self.message, self.field = code, message, field
+
+
+def _failed(lf, f):
+    """The tool error for a refusal; `field` names the argument at fault, so the records door reports a field problem."""
+    out = lf._error(f.code, f.message, status=contract.ERROR_CODES[f.code])
+    if f.field:
+        body = json.loads(out[0].text)
+        body["error_envelope"]["field"] = f.field
+        out[0].text = json.dumps(body)
+    return out
+
+
+# --------------------------------------------------------------------------- the records door's write context
+# FLY-TSK-087 (BRD DOC-D14184D324F0 6.7): think's records door writes through the two handlers below and nothing else.
+# It sets this context for one call: the door that carried the write, the intent's idempotency key, and for a retire
+# whether it undoes a create. A create with a key gets the id derived from the key, so a replay finds the same row.
+# The MCP tools never set it; their writes carry no door attribute and are read back as the agent door.
+_WRITE_CONTEXT = {}
+
+
+class door_write:
+    """with door_write(door="human", idempotency_key=k[, via="undo"]): one write through the records door."""
+
+    def __init__(self, **ctx):
+        self.ctx = ctx
+
+    def __enter__(self):
+        _WRITE_CONTEXT.clear()
+        _WRITE_CONTEXT.update(self.ctx)
+        return self
+
+    def __exit__(self, *exc):
+        _WRITE_CONTEXT.clear()
+        return False
 
 
 def _table():
@@ -89,6 +124,27 @@ def _present(item):
     return out
 
 
+_AUDIT = ("idempotency_key", "door", "retire_reason", "retired_door", "retired_via", "retire_idempotency_key")
+
+
+def load_correction_audit(table=None):
+    """{correction_id: {audit attribute: value}} for the records door's writes log (FLY-TSK-087). Retired included."""
+    table = table if table is not None else _table()
+    kwargs = {"FilterExpression": Attr("kind").eq(RECORD_KIND)}
+    out = {}
+    try:
+        while True:
+            page = table.scan(**kwargs)
+            for i in page.get("Items", []):
+                out[i.get("record_id")] = {k: i[k] for k in _AUDIT if i.get(k) is not None}
+            if not page.get("LastEvaluatedKey"):
+                break
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    except (ClientError, BotoCoreError) as exc:
+        raise _unreachable(exc)
+    return out
+
+
 def load_corrections(table=None, include_retired=False):
     """Every correction (active only unless include_retired), paginated, in a stable order."""
     table = table if table is not None else _table()
@@ -117,29 +173,29 @@ def engine_corrections(table=None):
 # --------------------------------------------------------------------------- validation
 def _clean_ids(raw):
     if not isinstance(raw, list) or not raw or not all(isinstance(r, str) and r.strip() for r in raw):
-        raise _Fail("invalid", "record_ids must be a non-empty list of record id strings")
+        raise _Fail("invalid", "record_ids must be a non-empty list of record id strings", "record_ids")
     return sorted({r.strip() for r in raw})
 
 
 def _validate(args):
     kind = args.get("kind")
     if kind not in contract.CORRECTION_KINDS:
-        raise _Fail("invalid", f"kind must be one of {', '.join(contract.CORRECTION_KINDS)}")
+        raise _Fail("invalid", f"kind must be one of {', '.join(contract.CORRECTION_KINDS)}", "kind")
     ids = _clean_ids(args.get("record_ids"))
     when = args.get("date")
     if kind in ("returned", "left") and not when:
-        raise _Fail("invalid", f"date is required for a '{kind}' correction")
+        raise _Fail("invalid", f"date is required for a '{kind}' correction", "date")
     if when is not None:
         try:
             _date.fromisoformat(str(when))
         except ValueError:
-            raise _Fail("invalid", "date must be an ISO date (YYYY-MM-DD)")
+            raise _Fail("invalid", "date must be an ISO date (YYYY-MM-DD)", "date")
     if kind == "together" and len(ids) < 2:
-        raise _Fail("invalid", "a 'together' correction needs at least two record_ids")
+        raise _Fail("invalid", "a 'together' correction needs at least two record_ids", "record_ids")
     _validate_confirmed(args, kind)
     for opt in ("reason", "question_id", "session"):
         if args.get(opt) is not None and not isinstance(args[opt], str):
-            raise _Fail("invalid", f"{opt} must be a string")
+            raise _Fail("invalid", f"{opt} must be a string", opt)
     return kind, str(when) if when else "", ids
 
 
@@ -148,22 +204,22 @@ def _validate_confirmed(args, kind):
     if kind != "confirmed":
         given = [k for k in _CONFIRMED_ONLY if args.get(k) is not None]
         if given:
-            raise _Fail("invalid", f"{', '.join(given)} belong to a 'confirmed' correction only, not '{kind}'")
+            raise _Fail("invalid", f"{', '.join(given)} belong to a 'confirmed' correction only, not '{kind}'", given[0])
         return
     days = {}
     for f in ("first_date", "last_date"):
         try:
             days[f] = _date.fromisoformat(str(args.get(f)))
         except ValueError:
-            raise _Fail("invalid", f"{f} is required for a 'confirmed' correction and must be an ISO date (YYYY-MM-DD)")
+            raise _Fail("invalid", f"{f} is required for a 'confirmed' correction and must be an ISO date (YYYY-MM-DD)", f)
     if days["first_date"] > days["last_date"]:
-        raise _Fail("invalid", "first_date must not be after last_date")
+        raise _Fail("invalid", "first_date must not be after last_date", "last_date")
     if args.get("method") not in contract.CONFIRMATION_METHODS:
-        raise _Fail("invalid", f"method must be one of {', '.join(contract.CONFIRMATION_METHODS)}")
+        raise _Fail("invalid", f"method must be one of {', '.join(contract.CONFIRMATION_METHODS)}", "method")
     sup = args.get("supersedes")
     if sup is not None and (not isinstance(sup, list) or not all(isinstance(x, str) and x.startswith(RECORD_KIND + "-")
                                                                  and len(x) > len(RECORD_KIND) + 1 for x in sup)):
-        raise _Fail("invalid", "supersedes must be a list of confirmation ids (correction-<hash16>)")
+        raise _Fail("invalid", "supersedes must be a list of confirmation ids (correction-<hash16>)", "supersedes")
 
 
 def check_record_ids_exist(ids, table):
@@ -182,7 +238,8 @@ def check_record_ids_exist(ids, table):
     except (ClientError, BotoCoreError) as exc:
         raise _unreachable(exc)
     if unknown:
-        raise _Fail("invalid", f"No such record: {', '.join(unknown)}. A correction names only records that exist. Nothing was written.")
+        raise _Fail("invalid", f"No such record: {', '.join(unknown)}. A correction names only records that exist. Nothing was written.",
+                    "record_ids")
 
 
 def check_supersedes_exist(args, table):
@@ -197,7 +254,7 @@ def check_supersedes_exist(args, table):
     except (ClientError, BotoCoreError) as exc:
         raise _unreachable(exc)
     if unknown:
-        raise _Fail("invalid", f"supersedes names no confirmation: {', '.join(unknown)}. Nothing was written.")
+        raise _Fail("invalid", f"supersedes names no confirmation: {', '.join(unknown)}. Nothing was written.", "supersedes")
 
 
 def _author():
@@ -213,9 +270,12 @@ def _build_item(args, kind, when, ids):
     if _lf().stamp_session(args):  # the session is optional; absent means the attribute is absent
         stamp["session"] = _lf().stamp_session(args)
     created = _now()
-    keys = contract.record_keys(RECORD_KIND, [kind, when, ",".join(ids), created])
+    idem = _WRITE_CONTEXT.get("idempotency_key")
+    keys = contract.record_keys(RECORD_KIND, ["intent", idem] if idem else [kind, when, ",".join(ids), created])
     item = {**keys, "kind": RECORD_KIND, "correction_kind": kind, "status": "active",
             "date_iso": when or created[:10], "record_ids": ids, "created_at": created, "updated_at": created, **stamp}
+    if idem:
+        item.update(idempotency_key=idem, door=_WRITE_CONTEXT.get("door"))
     if when:
         item["date"] = when
     if kind == "confirmed":
@@ -226,6 +286,14 @@ def _build_item(args, kind, when, ids):
         if args.get(opt):
             item[opt] = args[opt]
     return item
+
+
+_INTENT_FIELDS = ("correction_kind", "date", "record_ids", "reason", "question_id", "first_date", "last_date", "method",
+                  "supersedes", "author")
+
+
+def _same_intent(held, item):
+    return all(held.get(k) == item.get(k) for k in _INTENT_FIELDS)
 
 
 # --------------------------------------------------------------------------- handlers
@@ -251,13 +319,17 @@ async def record_trip_correction(arguments):
             table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                held = item.get("idempotency_key") and table.get_item(Key={"pk": item["pk"], "sk": item["sk"]},
+                                                                       ConsistentRead=True).get("Item")
+                if held and _same_intent(held, item):  # a replay of one records-door intent: the row it made
+                    return lf._success(_present(held))
                 return lf._error("duplicate", f"Correction {item['record_id']} already exists.", status=409)
             raise _unreachable(exc)
         except BotoCoreError as exc:
             raise _unreachable(exc)
         return lf._success(_present(item))
     except _Fail as f:
-        return lf._error(f.code, f.message, status=contract.ERROR_CODES[f.code])
+        return _failed(lf, f)
 
 
 async def retire_trip_correction(arguments):
@@ -267,10 +339,10 @@ async def retire_trip_correction(arguments):
         cid = args.get("correction_id")
         prefix = RECORD_KIND + "-"
         if not isinstance(cid, str) or not cid.startswith(prefix) or len(cid) == len(prefix):
-            raise _Fail("invalid", "correction_id must be a correction-<hash16> record id")
+            raise _Fail("invalid", "correction_id must be a correction-<hash16> record id", "correction_id")
         for opt in ("reason", "session"):
             if args.get(opt) is not None and not isinstance(args[opt], str):
-                raise _Fail("invalid", f"{opt} must be a string")
+                raise _Fail("invalid", f"{opt} must be a string", opt)
         who = _author()
         table = _table()
         key = {"pk": f"{RECORD_KIND}#{cid[len(prefix):]}", "sk": contract.SK_CURRENT}
@@ -291,6 +363,9 @@ async def retire_trip_correction(arguments):
             sets["retired_session"] = lf.stamp_session(args)
         if args.get("reason"):
             sets["retire_reason"] = args["reason"]
+        if _WRITE_CONTEXT.get("idempotency_key"):
+            sets.update(retired_door=_WRITE_CONTEXT.get("door"), retired_via=_WRITE_CONTEXT.get("via") or "retire",
+                        retire_idempotency_key=_WRITE_CONTEXT["idempotency_key"])
         if dry_run:
             return lf._resolved_call(
                 "retire_trip_correction", args, idem_key,
@@ -313,7 +388,7 @@ async def retire_trip_correction(arguments):
             raise _unreachable(exc)
         return lf._success(_present(resp["Attributes"]))
     except _Fail as f:
-        return lf._error(f.code, f.message, status=contract.ERROR_CODES[f.code])
+        return _failed(lf, f)
 
 
 HANDLERS = {

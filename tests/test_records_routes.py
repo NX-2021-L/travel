@@ -63,10 +63,11 @@ def test_trips_descriptor_is_derived_fixed_with_engine_params():
     assert all(c["editable"] is False for c in d["columns"])
 
 
-def test_corrections_descriptor_is_amend_with_audit_and_advertises_no_write():
+def test_corrections_descriptor_is_amend_with_audit_with_create_and_retire():
+    # FLY-TSK-087: the write half (tests/test_records_writes.py). Editable names the create fields; nothing is amended.
     _, _, d = get("/records/recordsets/trip_corrections/descriptor")
-    assert d["class"] == "amend_with_audit" and d["capabilities"] == [] and "inputs" not in d
-    assert all(c["editable"] is False for c in d["columns"])
+    assert d["class"] == "amend_with_audit" and d["capabilities"] == ["create", "retire"] and "inputs" not in d
+    assert d["reason"] == "required" and "amend" not in d["capabilities"]
 
 
 def test_trips_rows_are_the_engine_in_listing_order_with_lineage():
@@ -132,7 +133,7 @@ def test_unknown_set_and_unknown_route_are_404_problems():
         assert status == 404 and ctype == "application/problem+json", path
 
 
-def test_writes_are_not_served():
+def test_trips_take_no_writes():
     assert get("/records/recordsets/trips/intents", method="POST")[0] == 405
     assert get("/records/recordsets/trip_corrections/rows", method="DELETE")[0] == 405
 
