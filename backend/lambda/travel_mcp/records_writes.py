@@ -128,7 +128,10 @@ def _create(routes, intent, caller, key):
 def _same_create(held, intent, caller):
     """Whether a correction made under this key is the one this create intent would make (a replay)."""
     patch = intent.get("patch") if isinstance(intent.get("patch"), dict) else {}
-    want = {"kind": patch.get("kind"), "date": patch.get("date"), "record_ids": sorted(set(patch.get("record_ids") or [])),
+    ids = patch.get("record_ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        return False  # a malformed list is never a replay; the create refuses it at field record_ids (DVP-ISS-180)
+    want = {"kind": patch.get("kind"), "date": patch.get("date"), "record_ids": sorted({i.strip() for i in ids}),
             "reason": intent.get("reason"), "author": caller}
     have = {"kind": held.get("kind"), "date": held.get("date"), "record_ids": sorted(held.get("record_ids") or []),
             "reason": held.get("reason"), "author": held.get("author")}
@@ -230,7 +233,8 @@ def intent(routes, set_id, event, claims):
 
 # --------------------------------------------------------------------------- writes log
 def writes(routes, set_id, claims):
-    """The body of GET /recordsets/{set_id}/writes: newest first. The trips set is computed and has none."""
+    """The body of GET /recordsets/{set_id}/writes: oldest first, as the contract says (a view shows them newest first).
+    The trips set is computed and has no writes: its log is empty, never a 404."""
     if set_id != SET:
         return []
     caller = str(claims.get("sub") or "")
@@ -257,4 +261,4 @@ def writes(routes, set_id, claims):
             if a.get("retire_reason"):
                 entry["reason"] = a["retire_reason"]
             out.append(entry)
-    return sorted(out, key=lambda e: (e["at"] or "", e["idempotency_key"]), reverse=True)
+    return sorted(out, key=lambda e: (e["at"] or "", e["kind"] != "create", e["idempotency_key"]))

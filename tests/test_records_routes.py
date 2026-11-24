@@ -88,6 +88,10 @@ def test_trips_findings_carry_exclusions_unapplied_and_duplicates():
     # FLY-TSK-089 (lead ruling 18:09Z): one finding per code, a short summary; no rows (they are not trip rows, REC-C44)
     by = {f["code"]: f for f in body["findings"]}
     assert len(body["findings"]) == 3 and all("rows" not in f for f in body["findings"])
+    # Finding.refs (contract 0.6.0): the records each finding speaks of, in the sets they belong to
+    assert by["excluded_record"]["refs"] == [{"recordset": "travel_records", "key": "F-GONE"}]
+    assert by["unapplied_correction"]["refs"] == [{"recordset": "trip_corrections", "key": "C-GHOST"}]
+    assert by["duplicate_input"]["refs"] == [{"recordset": "travel_records", "key": "F-OUT1"}]
     assert by["excluded_record"]["message"] == "1 cancelled flight is in no trip"
     assert by["unapplied_correction"]["message"] == "1 correction changed no trip; 1 names records that are not held"
     assert by["duplicate_input"]["message"] == "1 record was supplied twice and counted once"
@@ -105,15 +109,15 @@ def test_findings_summarise_many_records_in_one_line_per_code():
     assert [f["message"] for f in only] == ["3 cancelled flights are in no trip"]
 
 
-def test_labels_are_lowercase_at_the_source_and_param_labels_wait_for_the_kit():
+def test_labels_are_lowercase_at_the_source_and_params_carry_labels():
     for d in rr.descriptors().values():
         assert d["title"] == d["title"].lower() and d["description"] == d["description"].lower()
         for c in d["columns"]:
             assert c["label"] == c["label"].lower()
             assert all(o["label"] == o["label"].lower() for o in c.get("options", []))
     assert rr.PARAM_LABELS == {"today": "today", "near_home_km": "near home, km"}
-    assert rr.SERVE_PARAM_LABELS is False  # Param.label is not in the contract travel's gate runs on yet (lane 2H)
-    assert all("label" not in p for p in rr.descriptors()["trips"]["params"])
+    # contract 0.6.0 (lane 2H): Param.label
+    assert {p["id"]: p["label"] for p in rr.descriptors()["trips"]["params"]} == rr.PARAM_LABELS
 
 
 def test_trips_params_change_the_computation():
@@ -154,10 +158,16 @@ def test_corrections_rows_include_retired_and_have_no_source():
 
 
 def test_unknown_set_and_unknown_route_are_404_problems():
-    for path in ("/records/recordsets/nope/descriptor", "/records/recordsets/trips/writes", "/records/other",
+    for path in ("/records/recordsets/nope/descriptor", "/records/recordsets/nope/writes", "/records/other",
                  "/records/recordsets/trips/intents"):
         status, ctype, _ = get(path)
         assert status == 404 and ctype == "application/problem+json", path
+
+
+def test_a_derived_sets_writes_log_is_empty_not_missing():
+    # INT-PLN-031's live check: every served set answers its writes route; trips is computed and has no writes
+    status, ctype, body = get("/records/recordsets/trips/writes")
+    assert status == 200 and ctype == "application/json" and body == []
 
 
 def test_trips_take_no_writes():
