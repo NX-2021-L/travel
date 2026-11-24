@@ -93,6 +93,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      # FLY-TSK-089 (BRD DOC-D14184D324F0 T-2): the records conformance gate. The corpus on the published kit, read
+      # groups and every write group travel declares, against local synthetic servers (no live store is touched).
+      # A failing case stops the run here: nothing is planned or applied, for io's deployment or hers (nana needs
+      # release).
+      - name: Set up Node (the corpus runner)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Records conformance gate (required; changes nothing)
+        run: |
+          TOKEN=$(aws codeartifact get-authorization-token --domain "${CODEARTIFACT_DOMAIN}" --domain-owner "${CODEARTIFACT_OWNER}" --region "${CODEARTIFACT_REGION}" --query authorizationToken --output text)
+          echo "::add-mask::${TOKEN}"
+          pip install -r tests/requirements.txt \
+            --extra-index-url "https://aws:${TOKEN}@${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/pypi/${CODEARTIFACT_REPOSITORY}/simple/" --quiet
+          bash scripts/records_conformance.sh
+
       # A required setting missing from the supplied + live environment makes this step exit 3: the run
       # stops here and apply never starts (FLY-TSK-028-0B, A-2).
       - name: Plan (read-only; changes nothing)

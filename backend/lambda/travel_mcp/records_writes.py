@@ -32,9 +32,12 @@ _STATUS = {"invalid": 422, "missing": 404, "not_allowed": 403, "duplicate": 422}
 class Refusal(Exception):
     """A refusal that writes nothing: an HTTP status, a problem, and for a conflict the current rows."""
 
-    def __init__(self, status, title, detail, field=None, rows=None, conflict=False):
+    def __init__(self, status, title, detail, field=None, rows=None, conflict=False, problem=False):
+        """problem=True answers a problem document (the intent itself is refused: its kind, its key, its token);
+        otherwise a rejected or conflict receipt (a value of the intent is refused)."""
         super().__init__(detail)
         self.status, self.title, self.detail, self.field, self.rows, self.conflict = status, title, detail, field, rows, conflict
+        self.problem = problem
 
 
 # --------------------------------------------------------------------------- helpers
@@ -61,7 +64,7 @@ def _read_token(token):
             raise ValueError
         return raw["c"], raw["k"]
     except Exception:  # noqa: BLE001 - every unreadable token reads the same
-        raise Refusal(422, "Undo not available", "The undo token is not one this set issued.", "undo_token")
+        raise Refusal(422, "Undo not available", "The undo token is not one this set issued.", "undo_token", problem=True)
 
 
 def _undo_for(c, audit, caller):
@@ -108,6 +111,9 @@ def _receipt(routes, rows, undo=None):
 
 # --------------------------------------------------------------------------- intents
 def _create(routes, intent, caller, key):
+    held = corrections.correction_for_intent_key(key)
+    if held is not None and not _same_create(held, intent, caller):
+        raise Refusal(422, "Idempotency key reused", "This key was used for another intent.", "idempotency_key", problem=True)
     patch = intent.get("patch")
     if not isinstance(patch, dict):
         raise Refusal(422, "Write refused", "A create carries the new correction's fields in patch.", "patch")
@@ -119,6 +125,17 @@ def _create(routes, intent, caller, key):
     return _receipt(routes, [routes._correction_row(c)], undo)
 
 
+def _same_create(held, intent, caller):
+    """Whether a correction made under this key is the one this create intent would make (a replay)."""
+    patch = intent.get("patch") if isinstance(intent.get("patch"), dict) else {}
+    want = {"kind": patch.get("kind"), "date": patch.get("date"), "record_ids": sorted(set(patch.get("record_ids") or [])),
+            "reason": intent.get("reason"), "author": caller}
+    have = {"kind": held.get("kind"), "date": held.get("date"), "record_ids": sorted(held.get("record_ids") or []),
+            "reason": held.get("reason"), "author": held.get("author")}
+    extra = {k: patch.get(k) for k in ("first_date", "last_date", "method", "question_id") if patch.get(k) is not None}
+    return want == have and all(held.get(k) == v for k, v in extra.items()) and not (set(patch) - set(CREATE_FIELDS))
+
+
 def _retire(routes, intent, caller, key):
     cid = intent.get("key")
     if not isinstance(cid, str) or not cid:
@@ -127,7 +144,7 @@ def _retire(routes, intent, caller, key):
         raise Refusal(422, "Write refused", "A retire carries the row's version in if_version.", "if_version")
     c = _current(routes, cid)
     if c is None:
-        raise Refusal(404, "Not found", "No such correction.", "key")
+        raise Refusal(404, "Not found", "No such correction.", "key", problem=True)
     audit = corrections.load_correction_audit().get(cid, {})
     if c["status"] == "retired" and audit.get("retire_idempotency_key") == key:
         return _receipt(routes, [routes._correction_row(c)])  # a replay: the same end state, written once
@@ -144,14 +161,15 @@ def _undo(routes, intent, caller, key):
     c = _current(routes, cid)
     audit = corrections.load_correction_audit().get(cid, {})
     if c is None or audit.get("idempotency_key") != create_key or c["author"] != caller:
-        raise Refusal(422, "Undo not available", "The undo token is not one this set issued to this caller.", "undo_token")
+        raise Refusal(422, "Undo not available", "The undo token is not one this set issued to this caller.", "undo_token",
+                      problem=True)
     if c["status"] == "retired":
         if audit.get("retire_idempotency_key") == key:
             return _receipt(routes, [routes._correction_row(c)])  # a replay
         raise Refusal(409, "Conflict", "The correction was retired since; there is nothing to undo.",
                       rows=[routes._correction_row(c)], conflict=True)
     if _now() >= _parse_time(c["created_at"]) + UNDO_WINDOW:
-        raise Refusal(422, "Undo not available", "The undo window has passed.", "undo_token")
+        raise Refusal(422, "Undo not available", "The undo window has passed.", "undo_token", problem=True)
     args = {"correction_id": cid, **({"reason": intent["reason"]} if intent.get("reason") else {})}
     done = _call(corrections.retire_trip_correction, args, caller, door="human", idempotency_key=key, via="undo")
     return _receipt(routes, [routes._correction_row(done)])
@@ -199,12 +217,12 @@ def intent(routes, set_id, event, claims):
             raise Refusal(400, "Invalid request", "An intent carries an Idempotency-Key.", "idempotency_key")
         kind = body.get("kind")
         if kind not in _KINDS:
-            raise Refusal(422, "Write refused", "This set takes create, retire and undo.", "kind")
+            raise Refusal(422, "Write refused", "This set takes create, retire and undo.", "kind", problem=True)
         if kind != "undo" and not (isinstance(body.get("reason"), str) and body["reason"].strip()):
             raise Refusal(422, "Write refused", "A reason is required.", "reason")
         return routes._resp(200, _KINDS[kind](routes, body, caller, key))
     except Refusal as exc:
-        if exc.status in (400, 405) and not exc.conflict:
+        if (exc.problem or exc.status in (400, 405)) and not exc.conflict:
             extra = {"allow": "GET"} if exc.status == 405 else None
             return routes.problem(exc.status, exc.title, exc.detail, exc.field, extra=extra)
         return routes._resp(exc.status, _rejected(routes, exc))

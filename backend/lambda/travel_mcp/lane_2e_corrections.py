@@ -127,6 +127,17 @@ def _present(item):
 _AUDIT = ("idempotency_key", "door", "retire_reason", "retired_door", "retired_via", "retire_idempotency_key")
 
 
+def correction_for_intent_key(key, table=None):
+    """The correction the records door made under this intent key, presented, or None (FLY-TSK-089). A read."""
+    table = table if table is not None else _table()
+    keys = contract.record_keys(RECORD_KIND, ["intent", key])
+    try:
+        item = table.get_item(Key={"pk": keys["pk"], "sk": keys["sk"]}, ConsistentRead=True).get("Item")
+    except (ClientError, BotoCoreError) as exc:
+        raise _unreachable(exc)
+    return _present(item) if item and item.get("idempotency_key") == key else None
+
+
 def load_correction_audit(table=None):
     """{correction_id: {audit attribute: value}} for the records door's writes log (FLY-TSK-087). Retired included."""
     table = table if table is not None else _table()
