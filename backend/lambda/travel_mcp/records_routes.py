@@ -60,12 +60,11 @@ _GLOSSES = {
     "kind": {"returned": "i came home on a date no record shows", "left": "i set out on a date no record shows",
              "together": "these records are one trip", "leave_out": "this is not a trip",
              "confirmed": "the engine has it right. stop asking."},
-    "status": {"active": "in force", "retired": "retired"},
     "method": {"examined": "looked at the records", "accepted_list": "accepted from the list"},
     "basis": {"recorded": "a record shows it", "derived": "worked out by a rule", "undecided": "not settled"},
     "state": {"under way": "under way", "upcoming": "upcoming", "planned": "planned, dates not settled", "past": "past"},
 }
-_VALUES = {"kind": contract.CORRECTION_KINDS, "status": contract.CORRECTION_STATUSES, "method": contract.CONFIRMATION_METHODS,
+_VALUES = {"kind": contract.CORRECTION_KINDS, "method": contract.CONFIRMATION_METHODS,
            "basis": contract.BASES, "state": tuple(trip_engine.STATE_ORDER)}
 
 
@@ -92,12 +91,13 @@ TRIP_COLUMNS = [
 ]
 CORRECTION_COLUMNS = [
     # editable marks the fields a correction is created with (records_writes.CREATE_FIELDS); nothing is amended.
+    # A retired correction is served with Row.retired true (contract 0.5.0) and its values unchanged, so the row
+    # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
     _col("correction_id", "Correction", "text"), _col("kind", "Kind", "enum", _options("kind"), True),
-    _col("status", "Status", "enum", _options("status")),
     _col("date", "Date", "text", editable=True), _col("date_iso", "Date (ISO)", "date"),
     _col("record_ids", "Record ids", "json", editable=True), _col("reason", "Reason", "text"),
     _col("author", "Author", "text"), _col("session", "Session", "text"), _col("question_id", "Question", "text", editable=True),
-    _col("created_at", "Created", "text"), _col("retired_at", "Retired", "text"), _col("retired_by", "Retired by", "text"),
+    _col("created_at", "Created", "text"),
     _col("first_date", "First date", "date", editable=True), _col("last_date", "Last date", "date", editable=True),
     _col("method", "Method", "enum", _options("method"), True), _col("supersedes", "Supersedes", "json", editable=True),
 ]
@@ -171,7 +171,11 @@ def _trip_row(t) -> dict:
 
 def _correction_row(c) -> dict:
     values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS}
-    return {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
+    row = {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
+    if c.get("status") == "retired":  # listed, dimmed by the view; the values stay as they were, the version moves
+        row["retired"] = True
+        row["version"] = _version({"values": values, "retired": True})
+    return row
 
 
 def _findings(result) -> list:

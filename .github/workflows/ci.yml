@@ -48,17 +48,6 @@ jobs:
         if: steps.aws.outcome == 'success'
         with:
           node-version: "22"
-      - name: Install the published @io-kit/records (CodeArtifact npm)
-        if: steps.aws.outcome == 'success'
-        run: |
-          T=$(aws codeartifact get-authorization-token --domain "${CODEARTIFACT_DOMAIN}" --domain-owner "${CODEARTIFACT_OWNER}" --region "${CODEARTIFACT_REGION}" --query authorizationToken --output text)
-          echo "::add-mask::${T}"
-          E="https://${CODEARTIFACT_DOMAIN}-${CODEARTIFACT_OWNER}.d.codeartifact.${CODEARTIFACT_REGION}.amazonaws.com/npm/${CODEARTIFACT_REPOSITORY}/"
-          cd tests/conformance
-          printf '@io-kit:registry=%s\n//%s:_authToken=%s\n' "$E" "${E#https://}" "$T" > .npmrc
-          npm install --no-save --no-package-lock "@io-kit/records@0.4.0" --silent
-          rm -f .npmrc
-          node -e 'import("@io-kit/records/testing").then(m => console.log("conformance cases (read-only):", m.READ_ONLY_CASES.length))'
       - name: pytest
         env:
           AWS_ACCESS_KEY_ID: testing
@@ -66,21 +55,12 @@ jobs:
           AWS_SESSION_TOKEN: testing
         run: |
           if [ "${{ steps.aws.outcome }}" = "success" ]; then pytest tests/; else pytest tests/test_release_ops.py tests/test_settings_fail_closed.py tests/test_no_instance_values.py tests/test_travel_deployment_template.py tests/test_door.py tests/test_door_acting_person.py tests/test_isolation_verification.py; fi
-      # FLY-TSK-088 (BRD DOC-D14184D324F0 T-2 read half): the @io-kit/records corpus, read-only mode, against the local
-      # records server on synthetic fixtures. The published kit comes from CodeArtifact npm, so like the full suite it
-      # runs where the role can be assumed (push to main) and is reported as limited elsewhere.
-      - name: Records conformance (read groups, published kit)
+      # FLY-TSK-088 / FLY-TSK-089 (BRD DOC-D14184D324F0 T-2): the @io-kit/records corpus on the published kit, read
+      # groups and every write group travel declares, against local synthetic servers. Like the full suite it runs where
+      # the role can be assumed (push to main); the deploy workflow runs the same gate before it changes anything.
+      - name: Records conformance gate (published kit, read and write groups)
         if: steps.aws.outcome == 'success'
-        env:
-          AWS_ACCESS_KEY_ID: testing
-          AWS_SECRET_ACCESS_KEY: testing
-          AWS_SESSION_TOKEN: testing
-        run: |
-          python3 tests/records_local_server.py 0 > "$RUNNER_TEMP/records_server.out" 2>&1 &
-          for i in $(seq 1 50); do grep -q '^READY ' "$RUNNER_TEMP/records_server.out" && break; sleep 0.2; done
-          read -r _ PORT DOOR < "$RUNNER_TEMP/records_server.out"
-          echo "::add-mask::${DOOR}"
-          node tests/conformance/run_records_conformance.mjs "$PORT" "$DOOR"
+        run: bash scripts/records_conformance.sh
       - name: Caps snapshot drift check
         if: steps.aws.outcome == 'success'
         run: python3 scripts/emit_caps.py --check

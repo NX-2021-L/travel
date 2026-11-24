@@ -122,15 +122,17 @@ def test_a_replayed_create_returns_the_same_row_and_writes_once(world):
     assert again["status"] == "applied" and again["rows"][0]["key"] == first["rows"][0]["key"]
     assert len(world.Table(RECORDS_TABLE).scan()["Items"]) == 1
     status, reused = create(patch={**RETURNED, "date": "2024-10-10"})  # the same key, another intent
-    assert status == 422 and reused["status"] == "rejected"
+    assert status == 422 and reused["field"] == "idempotency_key" and "status" in reused and "rows" not in reused  # a problem
 
 
 def test_retire_needs_the_rows_version_and_goes_to_the_retire_handler():
     row = create()[1]["rows"][0]
     status, stale = call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": "stale", "reason": "fixture"}, key="fixture-key-2")
-    assert status == 409 and stale["status"] == "conflict" and stale["rows"][0]["values"]["status"] == "active"
+    assert status == 409 and stale["status"] == "conflict" and "retired" not in stale["rows"][0]
     status, rc = call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")
-    assert status == 200 and rc["rows"][0]["values"]["status"] == "retired" and rc["rows"][0]["values"]["retired_by"] == SUB
+    retired = rc["rows"][0]
+    assert status == 200 and retired["retired"] is True and retired["values"] == row["values"] and retired["version"] != row["version"]
+    assert writes()[0]["principal"] == SUB  # who retired it is the writes log's
     assert rc["undo"] is None  # no handler restores a retired correction
 
 
@@ -150,6 +152,7 @@ def test_no_record_route_writes_the_table_itself(module):
     lane_uses = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                  and n.value.id in ("corrections", "lane_2e_corrections")}
     assert lane_uses <= {"record_trip_correction", "retire_trip_correction", "load_corrections", "load_correction_audit",
+                         "correction_for_intent_key",
                          "door_write", "_lf"}
 
 
@@ -192,7 +195,7 @@ def test_undo_of_a_create_is_a_retire_and_is_logged_as_an_undo():
     assert entry["undo"]["token"] == rc["undo"]["token"]
     status, u = call("POST", INTENTS, {"kind": "undo", "undo_token": rc["undo"]["token"]}, key="fixture-key-3")
     assert status == 200 and u["status"] == "applied" and u["undo"] is None
-    assert u["rows"][0]["values"]["status"] == "retired"
+    assert u["rows"][0]["retired"] is True and u["rows"][0]["values"] == rc["rows"][0]["values"]
     undo, made = writes()
     assert undo["kind"] == "undo" and undo["undo_closed"] == "is_undo" and undo["undo"] is None
     assert made["undo"] is None and made["undo_closed"] == "changed"
@@ -203,12 +206,12 @@ def test_an_undo_token_is_the_creators_only_and_closes_with_the_window(monkeypat
     rc = create()[1]
     assert writes(sub=OTHER_SUB)[0]["undo"] is None
     status, other = call("POST", INTENTS, {"kind": "undo", "undo_token": rc["undo"]["token"]}, sub=OTHER_SUB, key="fixture-key-4")
-    assert status == 422 and other["problems"][0]["field"] == "undo_token"
+    assert status == 422 and other["field"] == "undo_token"  # a problem document
     later = rw._now() + rw.UNDO_WINDOW + timedelta(seconds=1)
     monkeypatch.setattr(rw, "_now", lambda: later)
     assert writes()[0]["undo"] is None and writes()[0]["undo_closed"] == "expired"
     status, late = call("POST", INTENTS, {"kind": "undo", "undo_token": rc["undo"]["token"]}, key="fixture-key-5")
-    assert status == 422 and late["status"] == "rejected"
+    assert status == 422 and late["field"] == "undo_token"
     assert writes()[0]["kind"] == "create"  # nothing was written
 
 
@@ -262,7 +265,7 @@ def test_retire_is_idempotent(world):
 def test_an_intent_needs_a_key_and_a_kind_this_set_takes():
     assert call("POST", INTENTS, {"kind": "create", "patch": RETURNED, "reason": "x"}, key=None)[0] == 400
     status, rc = call("POST", INTENTS, {"kind": "amend", "key": "x", "if_version": 1, "patch": {}, "reason": "x"})
-    assert status == 422 and rc["problems"][0]["field"] == "kind"
+    assert status == 422 and rc["field"] == "kind"  # a problem document
     assert call("POST", "/records/recordsets/trips/intents", {"kind": "recompute"})[0] == 405
     assert call("POST", INTENTS, {"kind": "create"}, token="not-a-token")[0] == 401
 

@@ -20,7 +20,7 @@ def routes(monkeypatch):
 def test_every_enum_column_serves_inline_options_from_the_contract(routes):
     import contract
     import trip_engine
-    want = {"kind": contract.CORRECTION_KINDS, "status": contract.CORRECTION_STATUSES, "method": contract.CONFIRMATION_METHODS,
+    want = {"kind": contract.CORRECTION_KINDS, "method": contract.CONFIRMATION_METHODS,
             "first_basis": contract.BASES, "last_basis": contract.BASES, "state": tuple(trip_engine.STATE_ORDER)}
     seen = {}
     for d in routes.descriptors().values():
@@ -51,9 +51,24 @@ def test_both_descriptors_carry_a_description(routes):
         assert isinstance(d["description"], str) and d["description"].strip()
 
 
-def test_the_read_groups_run_in_ci_on_the_published_kit_in_read_only_mode():
+def test_the_corpus_gate_runs_in_ci_and_before_the_deploy_changes_anything():
+    """FLY-TSK-088 read groups and FLY-TSK-089 write groups: one script, on the published kit, a required gate."""
+    import json
+    import re
+    import yaml
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    runner = (ROOT / "tests" / "conformance" / "run_records_conformance.mjs").read_text()
-    assert '"@io-kit/records@0.4.0"' in ci and "/npm/${CODEARTIFACT_REPOSITORY}/" in ci
-    assert "node tests/conformance/run_records_conformance.mjs" in ci
-    assert "readOnly: true" in runner and "process.exit(bad ? 1 : 0)" in runner
+    script = (ROOT / "scripts" / "records_conformance.sh").read_text()
+    reads = (ROOT / "tests" / "conformance" / "run_records_conformance.mjs").read_text()
+    writes = (ROOT / "tests" / "conformance" / "run_records_conformance_writes.mjs").read_text()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", (ROOT / "tests" / "conformance" / "KIT_VERSION").read_text().strip())
+    assert "/npm/${CODEARTIFACT_REPOSITORY}/" in script and '"@io-kit/records@${VERSION}"' in script
+    assert "run_records_conformance.mjs" in script and "run_records_conformance_writes.mjs" in script and "--writable" in script
+    assert "readOnly: true" in reads and "readOnly: false" in writes and "process.exit(bad ? 1 : 0)" in writes
+    assert "bash scripts/records_conformance.sh" in ci
+    release = yaml.safe_load((ROOT / ".github" / "workflows" / "lambda-travel-mcp-deploy.yml").read_text())["jobs"]["release"]
+    names = [st.get("name", "") for st in release["steps"]]
+    gate = next(i for i, n in enumerate(names) if n.startswith("Records conformance gate"))
+    assert gate < next(i for i, n in enumerate(names) if n.startswith("Plan")) < next(i for i, n in enumerate(names) if n.startswith("Apply"))
+    assert "bash scripts/records_conformance.sh" in release["steps"][gate]["run"] and "continue-on-error" not in release["steps"][gate]
+    skipped = json.loads((ROOT / "tests" / "conformance" / "not_declared.json").read_text())
+    assert all(isinstance(v, str) and v.strip() for k, v in skipped.items() if k.startswith("REC-"))

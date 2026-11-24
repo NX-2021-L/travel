@@ -122,7 +122,9 @@ def test_paging_walks_every_row_once_and_a_foreign_cursor_is_refused():
 def test_corrections_rows_include_retired_and_have_no_source():
     _, _, body = get("/records/recordsets/trip_corrections/rows")
     assert [r["key"] for r in body["rows"]] == ["C-ACTIVE", "C-GHOST", "C-RETIRED"]
-    assert {r["values"]["status"] for r in body["rows"]} == {"active", "retired"}
+    # FLY-TSK-089: a retired correction is listed with Row.retired true; the row carries no status column
+    assert [r.get("retired", False) for r in body["rows"]] == [False, False, True]
+    assert all("status" not in r["values"] for r in body["rows"])
     assert all(r["source"] is None and r["sources"] == [] for r in body["rows"]) and body["findings"] == []
 
 
