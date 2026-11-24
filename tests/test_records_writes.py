@@ -94,6 +94,15 @@ def trips():
 
 
 def writes(sub=SUB):
+    """The writes log, oldest first (the contract's order; a view shows it newest first)."""
+    return _writes(sub)
+
+
+def newest(sub=SUB):
+    return writes(sub)[-1]
+
+
+def _writes(sub=SUB):
     return call("GET", WRITES, sub=sub, key=None)[1]
 
 
@@ -132,7 +141,7 @@ def test_retire_needs_the_rows_version_and_goes_to_the_retire_handler():
     status, rc = call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")
     retired = rc["rows"][0]
     assert status == 200 and retired["retired"] is True and retired["values"] == row["values"] and retired["version"] != row["version"]
-    assert writes()[0]["principal"] == SUB  # who retired it is the writes log's
+    assert newest()["principal"] == SUB  # who retired it is the writes log's
     assert rc["undo"] is None  # no handler restores a retired correction
 
 
@@ -181,7 +190,7 @@ def test_writes_serve_create_and_retire_with_reason_principal_and_door():
     row = create()[1]["rows"][0]
     call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture retire"}, key="fixture-key-2")
     log = writes()
-    retire, made = log
+    made, retire = log
     assert made == {**made, "kind": "create", "key": row["key"], "idempotency_key": "fixture-key-1", "principal": SUB,
                     "door": "human", "reason": "fixture reason", "undo": None, "undo_closed": "changed"}
     assert retire == {**retire, "kind": "retire", "key": row["key"], "idempotency_key": "fixture-key-2", "principal": SUB,
@@ -196,7 +205,7 @@ def test_undo_of_a_create_is_a_retire_and_is_logged_as_an_undo():
     status, u = call("POST", INTENTS, {"kind": "undo", "undo_token": rc["undo"]["token"]}, key="fixture-key-3")
     assert status == 200 and u["status"] == "applied" and u["undo"] is None
     assert u["rows"][0]["retired"] is True and u["rows"][0]["values"] == rc["rows"][0]["values"]
-    undo, made = writes()
+    made, undo = writes()
     assert undo["kind"] == "undo" and undo["undo_closed"] == "is_undo" and undo["undo"] is None
     assert made["undo"] is None and made["undo_closed"] == "changed"
     assert call("POST", INTENTS, {"kind": "undo", "undo_token": rc["undo"]["token"]}, key="fixture-key-3")[1]["status"] == "applied"  # replay
@@ -218,7 +227,7 @@ def test_an_undo_token_is_the_creators_only_and_closes_with_the_window(monkeypat
 def test_a_retire_offers_no_undo():
     row = create()[1]["rows"][0]
     rc = call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")[1]
-    assert rc["undo"] is None and writes()[0]["undo_closed"] == "no_inverse"
+    assert rc["undo"] is None and newest()["undo_closed"] == "no_inverse"
 
 
 def test_an_mcp_write_is_served_as_the_agent_door(world):
@@ -228,7 +237,7 @@ def test_an_mcp_write_is_served_as_the_agent_door(world):
     finally:
         lf._PRINCIPAL.reset(tok)
     assert out["success"]
-    entry = writes()[0]
+    entry = newest()
     assert entry["door"] == "agent" and entry["principal"] == "fixture-agent-principal" and entry["undo"] is None
 
 
@@ -259,7 +268,7 @@ def test_retire_is_idempotent(world):
     first = call("POST", INTENTS, body, key="fixture-key-2")[1]
     again = call("POST", INTENTS, body, key="fixture-key-2")[1]
     assert first["status"] == again["status"] == "applied" and again["rows"] == first["rows"]
-    assert [e["kind"] for e in writes()] == ["retire", "create"]
+    assert [e["kind"] for e in writes()] == ["create", "retire"]
 
 
 def test_an_intent_needs_a_key_and_a_kind_this_set_takes():
@@ -279,3 +288,20 @@ def test_a_correction_shows_in_the_next_trips_read_and_a_retired_one_leaves_it_e
     row = rc["rows"][0]
     call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")
     assert trips() == before
+
+
+@pytest.mark.parametrize("ids", ["F-OUT1,F-BACK1", "F-OUT1", ["F-OUT1", 7], {"F-OUT1": True}, [], [" "]])
+def test_record_ids_that_are_not_a_list_of_ids_are_a_field_problem_and_store_nothing(world, ids):
+    # DVP-ISS-180: a client that sends the json column as a string (or any other shape) never becomes a correction
+    status, rc = create(patch={"kind": "leave_out", "record_ids": ids})
+    assert status == 422 and rc["status"] == "rejected" and rc["problems"][0]["field"] == "record_ids"
+    assert world.Table(RECORDS_TABLE).scan()["Items"] == []
+    again_status, again = create(patch={"kind": "leave_out", "record_ids": ids})  # the same key: still no replay
+    assert again_status == 422 and world.Table(RECORDS_TABLE).scan()["Items"] == []
+
+
+def test_the_writes_log_is_oldest_first():
+    first = create(key="fixture-key-a")[1]["rows"][0]
+    create(patch={"kind": "leave_out", "record_ids": ["F-OUT2"]}, key="fixture-key-b")
+    log = writes()
+    assert [e["idempotency_key"] for e in log] == ["fixture-key-a", "fixture-key-b"] and log[0]["key"] == first["key"]

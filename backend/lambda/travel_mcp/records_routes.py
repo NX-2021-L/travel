@@ -106,10 +106,9 @@ TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays,
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
 CORRECTIONS_DESCRIPTION = ("the corrections i left on trips, each with its reason. a retired one stays listed, "
                            "and its trip goes back to what the records say.")
-# Param.label arrives in the W2 kit release (lane 2H). Until travel's gate runs on that release, a served label would fail
-# the contract (Param takes no other property), so the labels are held here and switched on with the kit bump.
+# Param.label (contract 0.6.0, lane 2H): how a host labels the parameter, lowercase by origin.
 PARAM_LABELS = {"today": "today", "near_home_km": "near home, km"}
-SERVE_PARAM_LABELS = False
+SERVE_PARAM_LABELS = True
 
 
 def _params_served(params):
@@ -191,7 +190,8 @@ def _correction_row(c) -> dict:
 
 # One finding per code, its message a short summary (lead ruling 18:09Z, BRD canvas "Trips"): a panel shows the
 # summary, not one line per record. Finding.rows names keys of THIS response only (REC-C44), and the records a trips
-# finding speaks of are not trip rows, so no rows are listed; the summary counts them.
+# finding speaks of are not trip rows, so they go in Finding.refs (contract 0.6.0) as {recordset, key}: the travel
+# records behind an exclusion or a duplicate, and the corrections that changed no trip.
 _KIND_PLURAL = {"flight": "flights", "lodging": "stays", "car_rental": "car rentals", "drive": "drives"}
 _BEFORE = {"cancelled": "cancelled", "unreadable": "unreadable", "left_out": "left-out"}
 _AFTER = {"at_home": "at home", "a_move": "in a move", "day_out_and_back": "out and back in a day"}
@@ -218,18 +218,21 @@ def _findings(result) -> list:
         parts = [_excluded_part(n, kind, disp) for (disp, kind), n in sorted(groups.items(), key=lambda g: (-g[1], g[0]))]
         msg = f"{parts[0]} {'is' if len(excluded) == 1 else 'are'} in no trip" if len(parts) == 1 else \
             f"{_plural(len(excluded), 'record is', 'records are')} in no trip: {', '.join(parts)}"
-        out.append({"code": "excluded_record", "severity": "info", "message": msg})
+        out.append({"code": "excluded_record", "severity": "info", "message": msg,
+                    "refs": [{"recordset": SOURCE_SET, "key": str(e["record_id"])} for e in excluded]})
     unapplied = result["unapplied_corrections"]
     if unapplied:
         unknown = sum(1 for c in unapplied if c.get("unknown_record_ids"))
         msg = f"{_plural(len(unapplied), 'correction', 'corrections')} changed no trip"
         if unknown:
             msg += f"; {unknown} {'names' if unknown == 1 else 'name'} records that are not held"
-        out.append({"code": "unapplied_correction", "severity": "warn", "message": msg})
+        out.append({"code": "unapplied_correction", "severity": "warn", "message": msg,
+                    "refs": [{"recordset": CORRECTIONS, "key": str(c["correction_id"])} for c in unapplied if c.get("correction_id")]})
     dup = result["duplicate_inputs"]
     if dup:
         out.append({"code": "duplicate_input", "severity": "warn",
-                    "message": f"{_plural(len(dup), 'record was', 'records were')} supplied twice and counted once"})
+                    "message": f"{_plural(len(dup), 'record was', 'records were')} supplied twice and counted once",
+                    "refs": [{"recordset": SOURCE_SET, "key": str(rid)} for rid in dup]})
     return out
 
 
@@ -338,7 +341,7 @@ def handle(event, environ=None):
     if method != "GET":
         return problem(405, "Method not allowed", extra={"allow": "GET, POST" if parts[-1:] == ["intents"] else "GET"})
     try:
-        if len(parts) == 3 and parts[0] == "recordsets" and parts[1] == records_writes.SET and parts[2] == "writes":
+        if len(parts) == 3 and parts[0] == "recordsets" and parts[1] in sets and parts[2] == "writes":  # trips: an empty log
             return _resp(200, records_writes.writes(sys.modules[__name__], parts[1], claims))
         if parts == ["recordsets"]:
             return _resp(200, [{"id": d["id"], "title": d["title"]} for d in sets.values()])
