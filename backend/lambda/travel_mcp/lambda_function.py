@@ -1242,7 +1242,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 
 def _with_cors(event: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, Any]:
-    """Echo ACAO only for allow-listed browser origins (CORS_ORIGINS)."""
+    """Echo ACAO only for allow-listed browser origins (CORS_ORIGINS).
+
+    The only source of CORS headers, preflight included: the Function URL carries no CORS config (FLY-ISS-005),
+    since a second source doubles access-control-allow-origin and browsers reject the response."""
     origin = ({k.lower(): v for k, v in (event.get("headers") or {}).items()}).get("origin", "")
     if origin and origin in _cors_origins() and isinstance(resp, dict):
         hdrs = dict(resp.get("headers") or {})
@@ -1251,6 +1254,7 @@ def _with_cors(event: Dict[str, Any], resp: Dict[str, Any]) -> Dict[str, Any]:
             "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Idempotency-Key",
             "Access-Control-Expose-Headers": "Mcp-Session-Id",
+            "Access-Control-Max-Age": "3600",
             "Vary": "Origin",
         })
         resp = {**resp, "headers": hdrs}

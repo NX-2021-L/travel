@@ -258,12 +258,8 @@ Resources:
     Properties:
       TargetFunctionArn: !GetAtt McpFunction.Arn
       AuthType: NONE
-      Cors:
-        AllowOrigins: ["*"]
-        AllowMethods: ["*"]
-        AllowHeaders: ["*"]
-        AllowCredentials: true
-        MaxAge: 3600
+      # FLY-ISS-005: no Cors here. The handler answers CORS from CORS_ORIGINS; a Function URL CORS config
+      # would add a second access-control-allow-origin header that browsers reject.
 
   FunctionUrlPublicInvoke:
     Type: AWS::Lambda::Permission
