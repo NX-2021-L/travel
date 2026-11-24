@@ -48,6 +48,7 @@ from io_kit_mcp_edge.jwks import fetch_https
 import settings as _settings  # noqa: E402
 
 _S = _settings.load()
+import records_routes as _records_routes  # noqa: E402  FLY-TSK-083: ui_only read routes (not in tools/list or caps)
 import door as _door  # noqa: E402  FLY-TSK-028-0D: which door this deployment answers through; absent mode refuses to start
 
 DOOR_MODE, INTERNAL_INVOKER_ROLE = _door.load()
@@ -1230,6 +1231,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return _door.health(event, SURFACE_NAME)
     if shape == "direct":  # internal door: the named role, straight to the tools (no bearer; IAM is the gate)
         return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE, INTERNAL_DEPLOY_ROLE), context)
+    if _records_routes.is_records_path(event):  # FLY-TSK-083: read-only records routes, human-door token only, never a tool
+        return _with_cors(event, _records_routes.handle(event))
     door = _enceladus_door(event)
     if door is not None:  # Enceladus-pool internal door: validated by validate_bearer, then straight to the tools
         event.setdefault("io_kit_mcp", {}).update(

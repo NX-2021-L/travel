@@ -23,6 +23,10 @@ KEYS = list(contract.SETTINGS)
 # function reads (IO_KIT_FLEET_JSON, inline JSON), not named by the contract; only the public door needs one.
 FLEET_KEYS = ("IO_KIT_FLEET_JSON",)
 
+# FLY-TSK-083: the read-only /records routes accept a human-door token only. Read by records_door, not named by the
+# contract (like the fleet registry); absent means the routes refuse every request.
+RECORDS_DOOR_KEYS = ("RECORDS_DOOR_ISSUERS", "RECORDS_DOOR_AUDIENCE", "RECORDS_DOOR_PUBLIC_KEYS")
+
 # Deploy-time settings the deploy script and workflow need (they never reach the function). Plan refuses
 # when one is absent, so a missing one stops the run before apply.
 DEPLOY_SETTINGS = ("FUNCTION_NAME", "AWS_REGION", "CODEARTIFACT_DOMAIN", "CODEARTIFACT_OWNER",
@@ -41,7 +45,7 @@ DROPPED = ("FINANCE_READ_CREDENTIAL", "FINANCE_READ_CREDENTIAL_SECRET",  # FLY-T
 def resolve(current: dict, supplied: dict) -> dict:
     env = dict(current or {})
     env["MCP_TRANSPORT"] = "streamable_http"
-    for k in KEYS + list(door.DOOR_KEYS) + list(FLEET_KEYS):
+    for k in KEYS + list(door.DOOR_KEYS) + list(FLEET_KEYS) + list(RECORDS_DOOR_KEYS):
         if supplied.get(k):
             env[k] = supplied[k]
     return {k: v for k, v in env.items() if v and k not in DROPPED}
