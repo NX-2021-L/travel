@@ -88,7 +88,7 @@ def test_the_source_input_label_is_lowercase():
 def test_corrections_show_the_boards_columns_and_hide_the_rest():
     cols = rr.descriptors()[rr.CORRECTIONS]["columns"]
     shown = [c["id"] for c in cols if not c.get("hint", {}).get("default_hidden")]
-    assert shown == ["correction_id", "kind", "date", "reason", "created_at"]
+    assert shown == ["correction_id", "kind", "date", "reason", "meta"]
     assert {c["id"] for c in cols} >= {"author", "session", "record_ids", "method", "supersedes"}
 
 
@@ -143,3 +143,20 @@ def test_a_returned_correction_reads_from_a_correction():
              "record_ids": ["f1"], "status": "active", "created_at": "2024-03-05T00:00:00Z"}]
     t = run(recs, corrections=corr)["trips"][0]
     assert t["last_by"] == "correction" and rr._trip_row(t)["values"]["last_hint"] == "from a correction"
+
+
+def test_the_meta_line_is_session_then_the_created_time():
+    assert rr.correction_meta({"session": "SES-1", "created_at": "2026-01-02T03:04:05Z"}) == "SES-1 · 2026-01-02 03:04"
+    assert rr.correction_meta({"session": None, "created_at": "2026-01-02T03:04:05Z"}) == "2026-01-02 03:04"
+    row = rr._correction_row({"correction_id": "correction-0000000000000001", "created_at": "2026-01-02T03:04:05Z"})
+    assert row["values"]["meta"] == "2026-01-02 03:04"
+
+
+def test_the_corrections_row_draws_date_under_kind_and_meta_under_reason(monkeypatch):
+    off = {c["id"]: c for c in rr.descriptors()[rr.CORRECTIONS]["columns"]}
+    assert not any("under" in c.get("hint", {}) for c in off.values())
+    monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", True)
+    cols = {c["id"]: c for c in rr.descriptors()[rr.CORRECTIONS]["columns"]}
+    assert {k: c["hint"]["under"] for k, c in cols.items() if "under" in c.get("hint", {})} == {"date": "kind", "meta": "reason"}
+    assert cols["date"]["editable"] is True and "hint" not in cols["kind"] and "hint" not in cols["reason"]
+    assert cols["author"]["hint"]["default_hidden"]

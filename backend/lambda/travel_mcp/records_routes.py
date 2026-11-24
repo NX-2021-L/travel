@@ -112,13 +112,15 @@ CORRECTION_COLUMNS = [
     # editable marks the fields a correction is created with (records_writes.CREATE_FIELDS); nothing is amended.
     # A retired correction is served with Row.retired true (contract 0.5.0) and its values unchanged, so the row
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
-    # Shown: the board's id, kind, date, reason and meta (created); the rest is served and hidden by default.
+    # Shown: the board's id, kind, date, reason and meta (canvas A6.7, A7.7); the rest is served and hidden by default.
+    # meta is the line under the reason: "session · YYYY-MM-DD HH:MM", or the time alone when no session is served.
     _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _options("kind"), True),
     _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date", default_hidden=True),
     _col("record_ids", "record ids", "json", editable=True, default_hidden=True), _col("reason", "reason", "text"),
+    _col("meta", "meta", "text"),
     _col("author", "author", "text", default_hidden=True), _col("session", "session", "text", default_hidden=True),
     _col("question_id", "question", "text", editable=True, default_hidden=True),
-    _col("created_at", "created", "text"),
+    _col("created_at", "created", "text", default_hidden=True),
     _col("first_date", "first date", "date", editable=True, default_hidden=True),
     _col("last_date", "last date", "date", editable=True, default_hidden=True),
     _col("method", "method", "enum", _options("method"), True, default_hidden=True),
@@ -137,21 +139,32 @@ SERVE_UNDER_HINTS = False
 PLACE_UNKNOWN = "unknown"
 
 
-def _trip_columns():
+# The corrections row (canvas A7.7): the date drawn under the kind, the meta line under the reason.
+CORRECTION_UNDER = {"date": ("kind", None), "meta": ("reason", None)}
+
+
+def _hinted(columns, under, hidden=()):
     if not SERVE_UNDER_HINTS:
-        return TRIP_COLUMNS
+        return columns
     out = []
-    for c in TRIP_COLUMNS:
-        hint = {k: v for k, v in c.get("hint", {}).items() if k != "default_hidden"} if c["id"] in UNDER else dict(c.get("hint", {}))
-        if c["id"] in UNDER:
-            under, tone = UNDER[c["id"]]
-            hint["under"] = under
+    for c in columns:
+        hint = {k: v for k, v in c.get("hint", {}).items() if k != "default_hidden"} if c["id"] in under else dict(c.get("hint", {}))
+        if c["id"] in under:
+            hint["under"], tone = under[c["id"]]
             if tone:
                 hint["tone"] = dict(tone)
-        elif c["id"] in HIDDEN_WHEN_HINTED:
+        elif c["id"] in hidden:
             hint["default_hidden"] = True
         out.append({**c, "hint": hint} if hint else {k: v for k, v in c.items() if k != "hint"})
     return out
+
+
+def _trip_columns():
+    return _hinted(TRIP_COLUMNS, UNDER, HIDDEN_WHEN_HINTED)
+
+
+def _correction_columns():
+    return _hinted(CORRECTION_COLUMNS, CORRECTION_UNDER)
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
@@ -187,7 +200,7 @@ def descriptors() -> dict:
                 "columns": _trip_columns()},
         CORRECTIONS: {"id": CORRECTIONS, "title": "trip corrections", "description": CORRECTIONS_DESCRIPTION, "key": "correction_id", "class": "amend_with_audit",
                       "capabilities": ["create", "retire"], "reason": "required", "collection": "client", "order": "free",
-                      "columns": CORRECTION_COLUMNS},
+                      "columns": _correction_columns()},
     }
 
 
@@ -234,8 +247,16 @@ def _trip_row(t) -> dict:
             "sources": sources, "source": sources[0] if sources else None}
 
 
+def correction_meta(c) -> str:
+    """Canvas A6.7: the session when one is served, then the created time as YYYY-MM-DD HH:MM, joined by " · "."""
+    created = str(c.get("created_at") or "")
+    when = created[:16].replace("T", " ") if len(created) >= 16 else created
+    return " · ".join(p for p in (str(c.get("session") or "").strip(), when) if p)
+
+
 def _correction_row(c) -> dict:
     values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS}
+    values["meta"] = correction_meta(c)
     row = {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
     if c.get("status") == "retired":  # listed, dimmed by the view; the values stay as they were, the version moves
         row["retired"] = True
