@@ -56,7 +56,7 @@ def test_list_names_the_two_sets():
 
 def test_trips_descriptor_is_derived_fixed_with_engine_params():
     _, _, d = get("/records/recordsets/trips/descriptor")
-    assert d["class"] == "derived" and d["order"] == "fixed" and d["capabilities"] == [] and d["inputs"] == ["trip_corrections"]
+    assert d["class"] == "derived" and d["order"] == "fixed" and d["capabilities"] == [] and d["inputs"] == [{"external": "travel_records", "label": "Travel records"}, "trip_corrections"]
     assert [p["id"] for p in d["params"]] == ["today", "near_home_km"]
     assert d["params"][1]["default"] == 50.0
     assert {c["id"] for c in d["columns"]} >= {"key", "first_date", "last_date", "state", "flags"}
@@ -75,7 +75,8 @@ def test_trips_rows_are_the_engine_in_listing_order_with_lineage():
     assert len(body["rows"]) == 2
     assert [r["values"]["state"] for r in body["rows"]] == ["upcoming", "past"]  # order_trips_for_listing: live, then past
     for r in body["rows"]:
-        assert r["source"]["recordset"] == rr.SOURCE_SET and r["source"]["key"] == r["values"]["record_ids"]
+        assert r["sources"] == [{"recordset": rr.SOURCE_SET, "key": rid} for rid in r["values"]["record_ids"]]
+        assert r["source"] == r["sources"][0]  # the deprecated alias is the first source
         assert set(r["values"]) == {c["id"] for c in rr.TRIP_COLUMNS}
     assert body["stale"] is None and body["next_cursor"] is None
 
@@ -121,7 +122,7 @@ def test_corrections_rows_include_retired_and_have_no_source():
     _, _, body = get("/records/recordsets/trip_corrections/rows")
     assert [r["key"] for r in body["rows"]] == ["C-ACTIVE", "C-GHOST", "C-RETIRED"]
     assert {r["values"]["status"] for r in body["rows"]} == {"active", "retired"}
-    assert all(r["source"] is None for r in body["rows"]) and body["findings"] == []
+    assert all(r["source"] is None and r["sources"] == [] for r in body["rows"]) and body["findings"] == []
 
 
 def test_unknown_set_and_unknown_route_are_404_problems():

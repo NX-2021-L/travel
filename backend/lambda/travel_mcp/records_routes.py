@@ -34,7 +34,7 @@ PREFIX = "/records"
 JSON = "application/json"
 PROBLEM = "application/problem+json"
 
-SOURCE_SET = "travel_records"  # lineage target: the underlying travel records, which travel does not (yet) serve as a set
+SOURCE_SET = "travel_records"  # lineage target: the underlying travel records; not served as a set, so an {external} input
 TRIPS, CORRECTIONS = "trips", "trip_corrections"
 
 
@@ -81,7 +81,7 @@ def descriptors() -> dict:
     today = _lane()._today().isoformat()
     return {
         TRIPS: {"id": TRIPS, "title": "Trips", "key": "key", "class": "derived", "capabilities": [], "reason": "none",
-                "collection": "client", "order": "fixed", "inputs": [CORRECTIONS],
+                "collection": "client", "order": "fixed", "inputs": [{"external": SOURCE_SET, "label": "Travel records"}, CORRECTIONS],
                 "params": [{"id": "today", "type": "date", "options_from": None, "default": today},
                            {"id": "near_home_km", "type": "number", "options_from": None, "default": _NEAR_HOME_DEFAULT}],
                 "columns": TRIP_COLUMNS},
@@ -123,13 +123,16 @@ def _version(values) -> str:
 
 def _trip_row(t) -> dict:
     values = {c["id"]: t.get(c["id"]) for c in TRIP_COLUMNS}
+    # Contract amendment 1: `sources` names every travel record the trip was built from, one {recordset, key} per record;
+    # `source` is the deprecated alias for the first of them (null when the trip has no lineage).
+    sources = [{"recordset": SOURCE_SET, "key": str(rid)} for rid in (t.get("record_ids") or [])]
     return {"key": t["key"], "version": _version(values), "values": values,
-            "source": {"recordset": SOURCE_SET, "key": list(t["record_ids"])} if t.get("record_ids") else None}
+            "sources": sources, "source": sources[0] if sources else None}
 
 
 def _correction_row(c) -> dict:
     values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS}
-    return {"key": c["correction_id"], "version": _version(values), "values": values, "source": None}
+    return {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
 
 
 def _findings(result) -> list:
