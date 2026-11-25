@@ -150,6 +150,9 @@ CORRECTION_COLUMNS = [
     _col("last_date", "last date", "date", editable=True, default_hidden=True),
     _col("method", "method", "enum", _options("method"), default_hidden=True),
     _col("supersedes", "supersedes", "json", default_hidden=True),
+    # label (lane 2AS, 3A pass 3 N27): the row's name for people, "<kind word> · <date>", hidden. The kit names a row by
+    # this when no visible text column comes first; computed on read, never stored, and outside the version.
+    _col("label", "name", "text", default_hidden=True),
 ]
 # Column.hint.under (lane 2O, io-kit PR 325, the W2b kit release): set on the PAIRED column, naming the column it is
 # drawn beneath; the kit draws its value as a sub-line there and gives it no column of its own. hint.tone maps the
@@ -322,20 +325,35 @@ def _trip_row(t) -> dict:
             "sources": sources, "source": sources[0] if sources else None}
 
 
-def correction_meta(c) -> str:
-    """Canvas A6.7: the session when one is served, then the created time as YYYY-MM-DD HH:MM, joined by " · "."""
+def correction_meta(c, door=None) -> str:
+    """Canvas A6.7: who wrote it, by door ("you", "agent", "scheduler"; 3A pass 3 N31, as the writes log names them),
+    then the created time as YYYY-MM-DD HH:MM, joined by " · ". Never a session or lane id."""
     created = str(c.get("created_at") or "")
     when = created[:16].replace("T", " ") if len(created) >= 16 else created
-    return " · ".join(p for p in (str(c.get("session") or "").strip(), when) if p)
+    return " · ".join(p for p in (records_writes.principal_word(door or "agent"), when) if p)
 
 
-def _correction_row(c) -> dict:
-    values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS}
-    values["meta"] = correction_meta(c)
+def correction_label(c) -> str:
+    """Lane 2AS: "<kind word> · <date>"; a kind with no date carries the day it was made (date_iso already is that)."""
+    kind = c.get("kind")
+    day = str(c.get("date_iso") or c.get("date") or str(c.get("created_at") or "")[:10])
+    return " · ".join(p for p in (KIND_LABELS.get(kind, kind or ""), day) if p)
+
+
+_UNVERSIONED = ("label",)
+
+
+def _correction_row(c, audit=None) -> dict:
+    """One corrections row. audit is the correction's writes-log attributes; read here when the caller has none."""
+    if audit is None:
+        audit = lane_2e_corrections.load_correction_audit().get(c["correction_id"], {})
+    values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS if col["id"] not in _UNVERSIONED}
+    values["meta"] = correction_meta(c, audit.get("door"))
     row = {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
     if c.get("status") == "retired":  # listed, dimmed by the view; the values stay as they were, the version moves
         row["retired"] = True
         row["version"] = _version({"values": values, "retired": True})
+    values["label"] = correction_label(c)  # after the version: a name for people, not part of what changed
     return row
 
 
@@ -418,7 +436,9 @@ def _trips_rows(query):
 
 
 def _correction_rows(query):
-    rows = [_correction_row(c) for c in lane_2e_corrections.load_corrections(None, include_retired=True)]
+    audit = lane_2e_corrections.load_correction_audit()
+    rows = [_correction_row(c, audit.get(c["correction_id"], {}))
+            for c in lane_2e_corrections.load_corrections(None, include_retired=True)]
     return rows, [], _vintage(CORRECTIONS, rows)
 
 

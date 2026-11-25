@@ -153,11 +153,40 @@ def test_a_returned_correction_reads_from_a_correction():
     assert t["last_by"] == "correction" and rr._trip_row(t)["values"]["last_hint"] == "from a correction"
 
 
-def test_the_meta_line_is_session_then_the_created_time():
-    assert rr.correction_meta({"session": "SES-1", "created_at": "2026-01-02T03:04:05Z"}) == "SES-1 · 2026-01-02 03:04"
-    assert rr.correction_meta({"session": None, "created_at": "2026-01-02T03:04:05Z"}) == "2026-01-02 03:04"
-    row = rr._correction_row({"correction_id": "correction-0000000000000001", "created_at": "2026-01-02T03:04:05Z"})
-    assert row["values"]["meta"] == "2026-01-02 03:04"
+def test_the_meta_line_names_the_writer_by_door_then_the_created_time():
+    # 3A pass 3 N31: the writer by door, as the writes log names it; never the session or lane id it was stamped with
+    c = {"session": "SES-1", "created_at": "2026-01-02T03:04:05Z"}
+    assert rr.correction_meta(c, "human") == "you · 2026-01-02 03:04"
+    assert rr.correction_meta(c, "agent") == rr.correction_meta(c) == "agent · 2026-01-02 03:04"
+    assert rr.correction_meta(c, "service") == "scheduler · 2026-01-02 03:04"
+    row = rr._correction_row({"correction_id": "correction-0000000000000001", "session": "SES-1",
+                              "created_at": "2026-01-02T03:04:05Z"}, {})
+    assert row["values"]["meta"] == "agent · 2026-01-02 03:04" and "SES-1" not in row["values"]["meta"]
+
+
+def test_every_corrections_row_is_named_kind_word_then_date():
+    # lane 2AS (3A pass 3 N27): a hidden text column "label" names the row; a kind with no date carries its made day
+    col = next(c for c in rr.descriptors()[rr.CORRECTIONS]["columns"] if c["id"] == "label")
+    assert col == {"id": "label", "label": "name", "type": "text", "editable": False, "hint": {"default_hidden": True}}
+    base = {"correction_id": "correction-0000000000000001", "created_at": "2026-01-02T03:04:05Z", "reason": "a reason"}
+    cases = [({"kind": "returned", "date": "2026-01-01", "date_iso": "2026-01-01"}, "returned · 2026-01-01"),
+             ({"kind": "leave_out", "date_iso": "2026-01-02"}, "leave out · 2026-01-02"),
+             ({"kind": "confirmed", "first_date": "2025-12-01", "last_date": "2025-12-04"}, "confirmed · 2026-01-02")]
+    for extra, want in cases:
+        row = rr._correction_row({**base, **extra}, {})
+        assert row["values"]["label"] == want and "a reason" not in want and "correction-" not in want
+
+
+def test_the_label_is_outside_the_version():
+    c = {"correction_id": "correction-0000000000000001", "kind": "together", "date_iso": "2026-01-02",
+         "created_at": "2026-01-02T03:04:05Z"}
+    one = rr._correction_row(c, {})
+    renamed = dict(rr.KIND_LABELS, together="one trip")
+    import pytest  # noqa: PLC0415
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rr, "KIND_LABELS", renamed)
+        two = rr._correction_row(c, {})
+    assert one["values"]["label"] != two["values"]["label"] and one["version"] == two["version"]
 
 
 def test_the_corrections_row_draws_date_under_kind_and_meta_under_reason(monkeypatch):
