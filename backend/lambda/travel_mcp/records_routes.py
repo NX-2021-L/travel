@@ -157,15 +157,27 @@ CORRECTION_COLUMNS = [
 # "not settled" in the board's soft tone. On since think went live on that release (intelligence 958); a consumer
 # on an older kit rejects the field. With the hints served, the basis enum and nights_exact stay served, hidden by default.
 SOFT = {"inferred": "soft", "not settled": "soft"}
-UNDER = {"key": ("place", None), "first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT),
-         "nights_hint": ("nights", None)}
-HIDDEN_WHEN_HINTED = ("first_basis", "last_basis", "nights_exact")
+# io's ruling (about 00:32Z on 2026-11-25): no id column on any DVP-PLN-021 screen; the kit's per-row copy button
+# (M39) copies the item id instead. So the trip key is served but hidden by default and drawn under nothing.
+UNDER = {"first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT), "nights_hint": ("nights", None)}
+HIDDEN_WHEN_HINTED = ("key", "first_basis", "last_basis", "nights_exact")
 SERVE_UNDER_HINTS = True
 PLACE_UNKNOWN = "unknown"
+# Column.hint.default_width, in px, from the Travel board's grid (canvas v30): the dates hold their mono value and its
+# sub-line on one 60 px row at 132, nights at 88, state at 108. The trip (place) column takes the rest of the row.
+TRIP_WIDTHS = {"first_date": 132, "last_date": 132, "nights": 88, "state": 108}
 
 
-# The corrections row (canvas A7.7): the date drawn under the kind, the meta line under the reason.
+# The corrections row (canvas A7.7): the date drawn under the kind, the meta line under the reason. The correction id
+# is hidden by default (io's ruling above); kind is 104 px on the board, the reason takes the rest.
 CORRECTION_UNDER = {"date": ("kind", None), "meta": ("reason", None)}
+CORRECTION_HIDDEN = ("correction_id",)
+CORRECTION_WIDTHS = {"kind": 104}
+
+
+def _widths(columns, widths):
+    return [{**c, "hint": {**c.get("hint", {}), "default_width": widths[c["id"]]}} if c["id"] in widths else c
+            for c in columns]
 
 
 def _hinted(columns, under, hidden=()):
@@ -185,12 +197,12 @@ def _hinted(columns, under, hidden=()):
 
 
 def _trip_columns():
-    return _hinted(TRIP_COLUMNS, UNDER, HIDDEN_WHEN_HINTED)
+    return _widths(_hinted(TRIP_COLUMNS, UNDER, HIDDEN_WHEN_HINTED), TRIP_WIDTHS)
 
 
 def _correction_columns():
     cols = [{**c, "options": _kind_options()} if c["id"] == "kind" else c for c in CORRECTION_COLUMNS]
-    return _hinted(cols, CORRECTION_UNDER)
+    return _widths(_hinted(cols, CORRECTION_UNDER, CORRECTION_HIDDEN), CORRECTION_WIDTHS)
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")
