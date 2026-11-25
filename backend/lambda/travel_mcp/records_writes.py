@@ -30,6 +30,14 @@ UNDO_WINDOW = timedelta(seconds=300)
 CREATE_FIELDS = ("kind", "date", "record_ids", "first_date", "last_date")
 DOOR_CONFIRMATION_METHOD = "examined"
 _STATUS = {"invalid": 422, "missing": 404, "not_allowed": 403, "duplicate": 422}
+# WriteEntry.principal names who wrote in words, never an identifier (io, 2026-11-25: no id on any DVP-PLN-021
+# screen; finance 2X serves the same words). It is taken from the door: a person through the records door is "you",
+# an MCP tool call is "agent". Travel has no scheduled writer, so "scheduler" is never served (kept for parity).
+PRINCIPAL_WORDS = {"human": "you", "agent": "agent", "service": "scheduler"}
+
+
+def principal_word(door):
+    return PRINCIPAL_WORDS.get(door, "agent")
 
 
 class Refusal(Exception):
@@ -251,7 +259,7 @@ def writes(routes, set_id, claims):
         undo, closed = _undo_for(c, a, caller)
         entry = {"idempotency_key": a.get("idempotency_key") or f"create:{cid}", "kind": "create", "key": cid,
                  "at": c["created_at"], "vintage": routes._vintage("write", cid, c["created_at"]),
-                 "principal": c["author"], "door": a.get("door") or "agent", "undo": undo}
+                 "principal": principal_word(a.get("door") or "agent"), "door": a.get("door") or "agent", "undo": undo}
         if c.get("reason"):
             entry["reason"] = c["reason"]
         if closed:
@@ -261,8 +269,8 @@ def writes(routes, set_id, claims):
             via = a.get("retired_via") or "retire"
             entry = {"idempotency_key": a.get("retire_idempotency_key") or f"retire:{cid}",
                      "kind": "undo" if via == "undo" else "retire", "key": cid, "at": c["retired_at"],
-                     "vintage": routes._vintage("write", cid, c["retired_at"]), "principal": c["retired_by"],
-                     "door": a.get("retired_door") or "agent", "undo": None,
+                     "vintage": routes._vintage("write", cid, c["retired_at"]),
+                     "principal": principal_word(a.get("retired_door") or "agent"), "door": a.get("retired_door") or "agent", "undo": None,
                      "undo_closed": "is_undo" if via == "undo" else "no_inverse"}
             if a.get("retire_reason"):
                 entry["reason"] = a["retire_reason"]
