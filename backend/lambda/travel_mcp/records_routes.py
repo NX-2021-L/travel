@@ -76,6 +76,31 @@ def _options(vocab):
     return [{"value": v, "label": glosses[v]} for v in _VALUES[vocab]]
 
 
+# Option.fields and Option.description (lane 2P, io-kit PR 327, the W2b kit release; FLY-TSK-092; canvas A7.7): each
+# correction kind names the columns its create needs, matching lane_2e_corrections._validate (returned and left need a
+# date; every kind names its records, or the panel neither shows nor sends them; confirmed takes its first and last
+# date, and this door sets method). A form shows only these plus the columns no kind names (kind), so the "correct this
+# trip" panel offers just the fields a kind needs. The label is the kind's own word (drawn in mono) and the gloss is
+# its description, drawn beneath. On since think went live on that release (intelligence 958); off, the gloss is the label.
+KIND_FIELDS = {
+    "returned": ["date", "record_ids"], "left": ["date", "record_ids"], "together": ["record_ids"],
+    "leave_out": ["record_ids"], "confirmed": ["record_ids", "first_date", "last_date"],
+}
+KIND_LABELS = {"returned": "returned", "left": "left", "together": "together", "leave_out": "leave out",
+               "confirmed": "confirmed"}
+SERVE_OPTION_FIELDS = True
+
+
+def _kind_options():
+    opts = _options("kind")
+    if not SERVE_OPTION_FIELDS:
+        return opts
+    if set(KIND_FIELDS) != set(KIND_LABELS) or set(KIND_FIELDS) != {o["value"] for o in opts}:
+        raise RuntimeError("records kind fields do not match the contract's correction kinds")
+    return [{"value": o["value"], "label": KIND_LABELS[o["value"]], "description": o["label"],
+             "fields": list(KIND_FIELDS[o["value"]])} for o in opts]
+
+
 TRIP_COLUMNS = [
     # place (FLY-TSK-091, canvas A6.3): the trip's places in its own records' words, "unknown" when it visited none; the
     # key stays the identity and is drawn under it. The *_hint columns carry the canvas A6.4 words drawn under a date or
@@ -114,17 +139,17 @@ CORRECTION_COLUMNS = [
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
     # Shown: the board's id, kind, date, reason and meta (canvas A6.7, A7.7); the rest is served and hidden by default.
     # meta is the line under the reason: "session · YYYY-MM-DD HH:MM", or the time alone when no session is served.
-    _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _options("kind"), True),
+    _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _kind_options(), True),
     _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date", default_hidden=True),
     _col("record_ids", "record ids", "json", editable=True, default_hidden=True), _col("reason", "reason", "text"),
     _col("meta", "meta", "text"),
     _col("author", "author", "text", default_hidden=True), _col("session", "session", "text", default_hidden=True),
-    _col("question_id", "question", "text", editable=True, default_hidden=True),
+    _col("question_id", "question", "text", default_hidden=True),
     _col("created_at", "created", "text", default_hidden=True),
     _col("first_date", "first date", "date", editable=True, default_hidden=True),
     _col("last_date", "last date", "date", editable=True, default_hidden=True),
-    _col("method", "method", "enum", _options("method"), True, default_hidden=True),
-    _col("supersedes", "supersedes", "json", editable=True, default_hidden=True),
+    _col("method", "method", "enum", _options("method"), default_hidden=True),
+    _col("supersedes", "supersedes", "json", default_hidden=True),
 ]
 # Column.hint.under (lane 2O, io-kit PR 325, the W2b kit release): set on the PAIRED column, naming the column it is
 # drawn beneath; the kit draws its value as a sub-line there and gives it no column of its own. hint.tone maps the
@@ -132,15 +157,27 @@ CORRECTION_COLUMNS = [
 # "not settled" in the board's soft tone. On since think went live on that release (intelligence 958); a consumer
 # on an older kit rejects the field. With the hints served, the basis enum and nights_exact stay served, hidden by default.
 SOFT = {"inferred": "soft", "not settled": "soft"}
-UNDER = {"key": ("place", None), "first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT),
-         "nights_hint": ("nights", None)}
-HIDDEN_WHEN_HINTED = ("first_basis", "last_basis", "nights_exact")
+# io's ruling (about 00:32Z on 2026-11-25): no id column on any DVP-PLN-021 screen; the kit's per-row copy button
+# (M39) copies the item id instead. So the trip key is served but hidden by default and drawn under nothing.
+UNDER = {"first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT), "nights_hint": ("nights", None)}
+HIDDEN_WHEN_HINTED = ("key", "first_basis", "last_basis", "nights_exact")
 SERVE_UNDER_HINTS = True
 PLACE_UNKNOWN = "unknown"
+# Column.hint.default_width, in px, from the Travel board's grid (canvas v30): the dates hold their mono value and its
+# sub-line on one 60 px row at 132, nights at 88, state at 108. The trip (place) column takes the rest of the row.
+TRIP_WIDTHS = {"first_date": 132, "last_date": 132, "nights": 88, "state": 108}
 
 
-# The corrections row (canvas A7.7): the date drawn under the kind, the meta line under the reason.
+# The corrections row (canvas A7.7): the date drawn under the kind, the meta line under the reason. The correction id
+# is hidden by default (io's ruling above); kind is 104 px on the board, the reason takes the rest.
 CORRECTION_UNDER = {"date": ("kind", None), "meta": ("reason", None)}
+CORRECTION_HIDDEN = ("correction_id",)
+CORRECTION_WIDTHS = {"kind": 104}
+
+
+def _widths(columns, widths):
+    return [{**c, "hint": {**c.get("hint", {}), "default_width": widths[c["id"]]}} if c["id"] in widths else c
+            for c in columns]
 
 
 def _hinted(columns, under, hidden=()):
@@ -160,11 +197,12 @@ def _hinted(columns, under, hidden=()):
 
 
 def _trip_columns():
-    return _hinted(TRIP_COLUMNS, UNDER, HIDDEN_WHEN_HINTED)
+    return _widths(_hinted(TRIP_COLUMNS, UNDER, HIDDEN_WHEN_HINTED), TRIP_WIDTHS)
 
 
 def _correction_columns():
-    return _hinted(CORRECTION_COLUMNS, CORRECTION_UNDER)
+    cols = [{**c, "options": _kind_options()} if c["id"] == "kind" else c for c in CORRECTION_COLUMNS]
+    return _widths(_hinted(cols, CORRECTION_UNDER, CORRECTION_HIDDEN), CORRECTION_WIDTHS)
 # Descriptor.description (contract 0.4.0): one sentence a host may show under the title, in the canvas's voice.
 TRIPS_DESCRIPTION = ("every trip the engine can assemble from my flights, stays, rentals and drives. where it gets one wrong, "
                      "i don't edit the trip. i leave a correction, and the trip is derived again.")

@@ -88,7 +88,10 @@ def test_the_source_input_label_is_lowercase():
 def test_corrections_show_the_boards_columns_and_hide_the_rest():
     cols = rr.descriptors()[rr.CORRECTIONS]["columns"]
     shown = [c["id"] for c in cols if not c.get("hint", {}).get("default_hidden")]
-    assert shown == ["correction_id", "kind", "date", "reason", "meta"]
+    assert shown == ["kind", "date", "reason", "meta"]  # io 2026-11-25: no id column; the kit's copy button has it
+    ids = {c["id"]: c for c in cols}
+    assert ids["correction_id"]["hint"] == {"default_hidden": True}  # no width: the board's 232 px went with the column
+    assert ids["kind"]["hint"]["default_width"] == 104 and "default_width" not in ids["reason"].get("hint", {})
     assert {c["id"] for c in cols} >= {"author", "session", "record_ids", "method", "supersedes"}
 
 
@@ -103,7 +106,7 @@ def test_under_hints_are_served_now_think_is_on_the_w2b_kit(monkeypatch):
     cols = _cols(rr.descriptors()[rr.TRIPS])
     # io-kit PR 325: under sits on the paired column, naming the plain column it is drawn beneath.
     assert {k: c["hint"]["under"] for k, c in cols.items() if "under" in c.get("hint", {})} == {
-        "key": "place", "first_hint": "first_date", "last_hint": "last_date", "nights_hint": "nights"}
+        "first_hint": "first_date", "last_hint": "last_date", "nights_hint": "nights"}  # no key line (io 2026-11-25)
     assert cols["first_hint"]["hint"]["tone"] == cols["last_hint"]["hint"]["tone"] == {"inferred": "soft", "not settled": "soft"}
     assert "tone" not in cols["key"]["hint"] and "tone" not in cols["nights_hint"]["hint"]
     for k, c in cols.items():  # REC-C75: never itself, never a missing or hinted column; tones dim or soft
@@ -113,7 +116,10 @@ def test_under_hints_are_served_now_think_is_on_the_w2b_kit(monkeypatch):
             assert "default_hidden" not in h
             assert set(h.get("tone", {}).values()) <= {"dim", "soft"}
     assert all(cols[k]["hint"]["default_hidden"] for k in rr.HIDDEN_WHEN_HINTED)
-    assert cols["nights"]["hint"] == {"align": "end"}
+    assert cols["key"]["hint"] == {"default_hidden": True}  # served for the copy button, never drawn
+    assert cols["nights"]["hint"] == {"align": "end", "default_width": 88}
+    assert {k: c["hint"].get("default_width") for k, c in cols.items() if "default_width" in c.get("hint", {})} == {
+        "first_date": 132, "last_date": 132, "nights": 88, "state": 108}  # the Travel board's grid; place takes the rest
     assert "source" not in cols  # canvas A6.1: lineage stays in the row's sources
     tones = {rr.date_hint(b, r, y) for b, r, y in [("derived", "forced", None), ("undecided", None, None)]}
     assert tones == set(rr.SOFT)  # the toned words are words the door serves
@@ -161,5 +167,5 @@ def test_the_corrections_row_draws_date_under_kind_and_meta_under_reason(monkeyp
     monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", True)
     cols = {c["id"]: c for c in rr.descriptors()[rr.CORRECTIONS]["columns"]}
     assert {k: c["hint"]["under"] for k, c in cols.items() if "under" in c.get("hint", {})} == {"date": "kind", "meta": "reason"}
-    assert cols["date"]["editable"] is True and "hint" not in cols["kind"] and "hint" not in cols["reason"]
+    assert cols["date"]["editable"] is True and cols["kind"]["hint"] == {"default_width": 104} and "hint" not in cols["reason"]
     assert cols["author"]["hint"]["default_hidden"]
