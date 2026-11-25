@@ -28,6 +28,5 @@
   "REC-C41": "recompute",
   "REC-C42": "recompute",
   "REC-C43": "staleness reads of the derived set: run in the read run",
-  "REC-C44": "staleness reads of the derived set: run in the read run",
-  "REC-C77": "source labels: behind SERVE_SOURCE_LABELS until think is live on 0.7.0; the commit that turns it on removes this line"
+  "REC-C44": "staleness reads of the derived set: run in the read run"
 }
