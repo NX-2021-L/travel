@@ -92,7 +92,9 @@ def test_corrections_show_the_boards_columns_and_hide_the_rest():
     assert {c["id"] for c in cols} >= {"author", "session", "record_ids", "method", "supersedes"}
 
 
-def test_under_hints_are_off_until_the_w2b_kit_is_live(monkeypatch):
+def test_under_hints_are_served_now_think_is_on_the_w2b_kit(monkeypatch):
+    assert rr.SERVE_UNDER_HINTS  # think is live on @io-kit/records 0.7.0 (intelligence 958)
+    monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", False)
     off = _cols(rr.descriptors()[rr.TRIPS])
     assert not any("under" in c.get("hint", {}) or "tone" in c.get("hint", {}) for c in off.values())
     assert not any(off[k].get("hint", {}).get("default_hidden") for k in ("key", *rr.HIDDEN_WHEN_HINTED))
@@ -153,6 +155,7 @@ def test_the_meta_line_is_session_then_the_created_time():
 
 
 def test_the_corrections_row_draws_date_under_kind_and_meta_under_reason(monkeypatch):
+    monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", False)
     off = {c["id"]: c for c in rr.descriptors()[rr.CORRECTIONS]["columns"]}
     assert not any("under" in c.get("hint", {}) for c in off.values())
     monkeypatch.setattr(rr, "SERVE_UNDER_HINTS", True)

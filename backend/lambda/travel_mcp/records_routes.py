@@ -129,13 +129,13 @@ CORRECTION_COLUMNS = [
 # Column.hint.under (lane 2O, io-kit PR 325, the W2b kit release): set on the PAIRED column, naming the column it is
 # drawn beneath; the kit draws its value as a sub-line there and gives it no column of its own. hint.tone maps the
 # paired column's own served value to "dim" or "soft" (unlisted values are dim): canvas A6.4 draws "inferred" and
-# "not settled" in the board's soft tone. Served only once think is live on that release (a consumer on an older kit
-# rejects the field). With the hints served, the basis enum and nights_exact stay served and are hidden by default.
+# "not settled" in the board's soft tone. On since think went live on that release (intelligence 958); a consumer
+# on an older kit rejects the field. With the hints served, the basis enum and nights_exact stay served, hidden by default.
 SOFT = {"inferred": "soft", "not settled": "soft"}
 UNDER = {"key": ("place", None), "first_hint": ("first_date", SOFT), "last_hint": ("last_date", SOFT),
          "nights_hint": ("nights", None)}
 HIDDEN_WHEN_HINTED = ("first_basis", "last_basis", "nights_exact")
-SERVE_UNDER_HINTS = False
+SERVE_UNDER_HINTS = True
 PLACE_UNKNOWN = "unknown"
 
 
