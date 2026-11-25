@@ -32,12 +32,14 @@ def test_every_enum_column_serves_inline_options_from_the_contract(routes):
     assert set(seen) == set(want)
 
 
-def test_kind_labels_are_travels_own_glosses(routes):
+def test_kind_options_carry_travels_own_words_and_glosses(routes):
     kind = next(c for c in routes.descriptors()["trip_corrections"]["columns"] if c["id"] == "kind")
-    labels = {o["value"]: o["label"] for o in kind["options"]}
-    assert labels["returned"] == "i came home on a date no record shows"
-    assert labels["leave_out"] == "this is not a trip"
-    assert all(label == label.lower() for label in labels.values())  # lowercase is in the strings, never CSS
+    opts = {o["value"]: o for o in kind["options"]}
+    assert opts["returned"]["label"] == "returned" and opts["leave_out"]["label"] == "leave out"  # canvas A7.7
+    assert opts["returned"]["description"] == "i came home on a date no record shows"
+    assert opts["leave_out"]["description"] == "this is not a trip"
+    for o in opts.values():  # lowercase is in the strings, never CSS
+        assert o["label"] == o["label"].lower() and o["description"] == o["description"].lower()
 
 
 def test_a_vocabulary_value_without_a_gloss_fails_loudly(routes, monkeypatch):

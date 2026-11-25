@@ -81,14 +81,14 @@ def _options(vocab):
 # date; every kind names its records, or the panel neither shows nor sends them; confirmed takes its first and last
 # date, and this door sets method). A form shows only these plus the columns no kind names (kind), so the "correct this
 # trip" panel offers just the fields a kind needs. The label is the kind's own word (drawn in mono) and the gloss is
-# its description, drawn beneath. Served only once think is live on that release; until then the gloss is the label.
+# its description, drawn beneath. On since think went live on that release (intelligence 958); off, the gloss is the label.
 KIND_FIELDS = {
     "returned": ["date", "record_ids"], "left": ["date", "record_ids"], "together": ["record_ids"],
     "leave_out": ["record_ids"], "confirmed": ["record_ids", "first_date", "last_date"],
 }
 KIND_LABELS = {"returned": "returned", "left": "left", "together": "together", "leave_out": "leave out",
                "confirmed": "confirmed"}
-SERVE_OPTION_FIELDS = False
+SERVE_OPTION_FIELDS = True
 
 
 def _kind_options():

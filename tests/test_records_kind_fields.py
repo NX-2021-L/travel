@@ -1,7 +1,7 @@
 """FLY-TSK-092 (DVP-PLN-021 lane 2Q): trip_corrections' kind options serve Option.fields.
 
 Each kind names the columns its create needs, matching travel's own per-kind checks, so think's "correct this trip"
-panel offers only the field a kind needs. Served behind SERVE_OPTION_FIELDS until think is live on the W2b kit.
+panel offers only the field a kind needs. SERVE_OPTION_FIELDS is on since think went live on the W2b kit.
 """
 import sys
 from pathlib import Path
@@ -19,7 +19,9 @@ def _kind(d):
     return next(c for c in d["columns"] if c["id"] == "kind")
 
 
-def test_off_until_the_w2b_kit_is_live():
+def test_served_now_think_is_on_the_w2b_kit(monkeypatch):
+    assert rr.SERVE_OPTION_FIELDS  # think is live on @io-kit/records 0.7.0 (intelligence 958)
+    monkeypatch.setattr(rr, "SERVE_OPTION_FIELDS", False)
     for o in _kind(rr.descriptors()[rr.CORRECTIONS])["options"]:
         assert set(o) == {"value", "label"}
 
