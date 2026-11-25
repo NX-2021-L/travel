@@ -26,7 +26,8 @@ ENTRY POINT
     chronological order (first_date, key); use order_trips_for_listing for the BRD list order.
 
 Each trip carries the contract.TRIP_FIELDS plus first_rule / last_rule (contract.GET_TRIP_EXTRA_FIELDS),
-record_ids, nights_exact, and first_evidence_date / last_evidence_date. A boundary basis is one of
+record_ids, nights_exact, first_evidence_date / last_evidence_date, first_by / last_by (what set a recorded
+boundary: the movement's record kind, or "correction"). A boundary basis is one of
 contract.BASES: `recorded`; `derived` with the name of the rule in first_rule / last_rule (from_lodging,
 forced, a_move); or `undecided`, which still shows a bound when one exists (rule `bounded`).
 A boundary set by an active correction reads `recorded`, and the correction is listed in `corrections`.
@@ -63,9 +64,11 @@ def _iso(d):
 
 
 # --------------------------------------------------------------------------- normalise
-def _end(rec, pid, aid, lat=None, lon=None):
+def _end(rec, pid, aid, lat=None, lon=None, label=()):
+    """A place end. `label` names the record's own words for the place, first present wins (FLY-TSK-091)."""
+    words = next((str(rec[k]).strip() for k in label if rec.get(k) and str(rec[k]).strip()), None)
     return {"place_id": rec.get(pid) or None, "area_id": rec.get(aid) or None,
-            "lat": rec.get(lat) if lat else None, "lon": rec.get(lon) if lon else None}
+            "lat": rec.get(lat) if lat else None, "lon": rec.get(lon) if lon else None, "label": words}
 
 
 def _kind_of(rec):
@@ -99,18 +102,18 @@ def _normalise(rec):
         elif kind == "drive":
             ev.update(date=_d(rec.get("date")), seq=rec.get("sequence") or 0, time="",
                       frm=_end(rec, "from_place_id", "from_area_id", "from_lat", "from_lon"),
-                      to=_end(rec, "to_place_id", "to_area_id", "to_lat", "to_lon"))
+                      to=_end(rec, "to_place_id", "to_area_id", "to_lat", "to_lon", ("destination",)))
             ok = ev["date"] is not None
         elif kind == "lodging":
             first = _d(rec.get("first_night"))
             last = _d(rec.get("last_night")) or first
             ev.update(date=first, start=first, checkout=(last + _ONE) if last else None,
-                      place=_end(rec, "place_id", "area_id", "lat", "lon"))
+                      place=_end(rec, "place_id", "area_id", "lat", "lon", ("city", "place_label")))
             ok = first is not None and last >= first
         elif kind == "car_rental":
             pick = _d(rec.get("pickup_date"))
             drop = _d(rec.get("dropoff_date")) or pick
-            ev.update(date=pick, start=pick, checkout=drop, place=_end(rec, "pickup_place_id", "pickup_area_id"))
+            ev.update(date=pick, start=pick, checkout=drop, place=_end(rec, "pickup_place_id", "pickup_area_id", label=("pickup_place",)))
             ok = pick is not None and drop >= pick
         else:
             ok = False
@@ -325,10 +328,44 @@ def _places_visited(s):
         vis = [p["place"] for p in sorted(s["lodging"] + s["rentals"], key=lambda e: (e["start"], e["id"]))]
     out = []
     for e in vis:
-        k = e.get("area_id") or e.get("place_id")
+        k = _place_key(e)
         if k and (not out or out[-1] != k):
             out.append(k)
     return out
+
+
+def _place_key(e):
+    return e.get("area_id") or e.get("place_id")
+
+
+def _words_of_key(k):
+    """A place id read as words when no record names it: city:san-francisco -> san francisco; apt:LIS -> LIS."""
+    _, _, rest = str(k).partition(":")
+    return rest.replace("-", " ") if str(k).startswith("city:") else rest or str(k)
+
+
+PLACE_LABEL_MAX = 3
+
+
+def _place_label(s, visited):
+    """The trip's place label (FLY-TSK-091): each place visited, in order, in the words of the trip's own records
+    for it (a stay's city, a drive's destination, a rental's pickup place), else its id read as words; None when
+    the trip visited no place. Past PLACE_LABEL_MAX places it ends "and N more"."""
+    ends = [m["to"] for m in s["movs"]] + [p["place"] for p in sorted(s["lodging"] + s["rentals"], key=lambda e: (e["start"], e["id"]))]
+    named = {}
+    for e in ends:
+        k = _place_key(e)
+        if k and e.get("label") and k not in named:
+            named[k] = e["label"]
+    words = []
+    for k in visited:
+        w = named.get(k) or _words_of_key(k)
+        if w and w not in words:
+            words.append(w)
+    if not words:
+        return None
+    head = ", ".join(words[:PLACE_LABEL_MAX])
+    return head + (f" and {len(words) - PLACE_LABEL_MAX} more" if len(words) > PLACE_LABEL_MAX else "")
 
 
 # --------------------------------------------------------------------------- the entry point
@@ -453,14 +490,17 @@ def _finalize(s, home, today, corr, applied, near_km):
     ids = {e["id"] for e in _all(s)}
     fd, fb, fr = _start(s)
     ld, lb, lr = _finish(s)
+    # first_by / last_by (FLY-TSK-091): what set a recorded boundary, the movement's record kind or "correction".
+    fby = s["movs"][0]["kind"] if fb == "recorded" and s["movs"] else None
+    lby = s["movs"][-1]["kind"] if lb == "recorded" and s["movs"] else None
     mine = []
     for c in corr:
         if not ids & set(c.get("record_ids") or []):
             continue
         if c.get("kind") == "returned" and _d(c.get("date")):
-            ld, lb, lr = _d(c["date"]), "recorded", None
+            ld, lb, lr, lby = _d(c["date"]), "recorded", None, "correction"
         elif c.get("kind") == "left" and _d(c.get("date")):
-            fd, fb, fr = _d(c["date"]), "recorded", None
+            fd, fb, fr, fby = _d(c["date"]), "recorded", None, "correction"
         elif c.get("kind") != "together":
             continue
         mine.append(c)
@@ -478,12 +518,14 @@ def _finalize(s, home, today, corr, applied, near_km):
     if _near_unlisted(s, home, near_km):
         flags.append("is this place home")
     per = home.on(fd)[0][0]
+    visited = _places_visited(s)
     return {
         "key": recs[0]["id"], "first_date": _iso(fd), "first_basis": fb, "first_rule": fr,
-        "last_date": _iso(ld), "last_basis": lb, "last_rule": lr, "nights": max((ld - fd).days, 0),
+        "last_date": _iso(ld), "last_basis": lb, "last_rule": lr, "first_by": fby, "last_by": lby,
+        "nights": max((ld - fd).days, 0),
         "nights_exact": fb != "undecided" and lb != "undecided",
         "first_evidence_date": _iso(s["first_ev"]), "last_evidence_date": _iso(s["last_ev"]),
-        "places_visited": _places_visited(s),
+        "places_visited": visited, "place": _place_label(s, visited),
         "legs": [{"record_id": m["id"], "kind": m["kind"], "date": _iso(m["date"]),
                   "from": m["frm"]["place_id"] or m["frm"]["area_id"], "to": m["to"]["place_id"] or m["to"]["area_id"]}
                  for m in s["movs"]],
