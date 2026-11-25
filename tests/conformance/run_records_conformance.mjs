@@ -14,7 +14,10 @@ const results = await runConformance({
   hints: { derivedSet: "trips", outOfReachSet: "travel_records" },
 });
 // Read-only cases travel cannot exercise yet: version_carries (no new_version set) and REC-C53 (needs a mutable set).
-const NOT_SERVED = new Set(["REC-C53", "REC-C70"]);
+// REC-C75 (hint.under), REC-C76 (option fields) and REC-C77 (source labels) skip until travel serves them: each is
+// behind a switch in records_routes.py (SERVE_UNDER_HINTS, SERVE_OPTION_FIELDS, SERVE_SOURCE_LABELS) that turns on
+// only once think is live on 0.7.0. The commit that turns a switch on takes its case out of this set.
+const NOT_SERVED = new Set(["REC-C53", "REC-C70", "REC-C75", "REC-C76", "REC-C77"]);
 let bad = 0;
 for (const r of results) {
   const readOnly = READ_ONLY_CASES.includes(r.id);
