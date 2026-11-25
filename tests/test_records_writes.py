@@ -141,7 +141,7 @@ def test_retire_needs_the_rows_version_and_goes_to_the_retire_handler():
     status, rc = call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")
     retired = rc["rows"][0]
     assert status == 200 and retired["retired"] is True and retired["values"] == row["values"] and retired["version"] != row["version"]
-    assert newest()["principal"] == SUB  # who retired it is the writes log's
+    assert newest()["principal"] == "you"  # who retired it, in the door's word, never the subject id
     assert rc["undo"] is None  # no handler restores a retired correction
 
 
@@ -191,9 +191,9 @@ def test_writes_serve_create_and_retire_with_reason_principal_and_door():
     call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture retire"}, key="fixture-key-2")
     log = writes()
     made, retire = log
-    assert made == {**made, "kind": "create", "key": row["key"], "idempotency_key": "fixture-key-1", "principal": SUB,
+    assert made == {**made, "kind": "create", "key": row["key"], "idempotency_key": "fixture-key-1", "principal": "you",
                     "door": "human", "reason": "fixture reason", "undo": None, "undo_closed": "changed"}
-    assert retire == {**retire, "kind": "retire", "key": row["key"], "idempotency_key": "fixture-key-2", "principal": SUB,
+    assert retire == {**retire, "kind": "retire", "key": row["key"], "idempotency_key": "fixture-key-2", "principal": "you",
                       "door": "human", "reason": "fixture retire", "undo": None, "undo_closed": "no_inverse"}
     assert {e["door"] for e in log} <= {"human", "agent"} and not {e.get("undo_closed") for e in log} & {"service", "settled"}
 
@@ -238,7 +238,7 @@ def test_an_mcp_write_is_served_as_the_agent_door(world):
         lf._PRINCIPAL.reset(tok)
     assert out["success"]
     entry = newest()
-    assert entry["door"] == "agent" and entry["principal"] == "fixture-agent-principal" and entry["undo"] is None
+    assert entry["door"] == "agent" and entry["principal"] == "agent" and entry["undo"] is None
 
 
 # ---------------------------------------------------------------- criterion 4 (T-29): field problems, idempotent retire
@@ -313,3 +313,18 @@ def test_a_confirmation_through_the_door_is_examined(world):
                                "last_date": "2024-10-08"}, reason="fixture")
     assert status == 200 and rc["status"] == "applied", rc
     assert rc["rows"][0]["values"]["method"] == "examined"
+
+
+def test_no_writes_entry_carries_an_identifier_as_its_principal(world):
+    # io, 2026-11-25: no id on any DVP-PLN-021 screen. The writes log names who wrote by door, as finance does.
+    row = create()[1]["rows"][0]
+    call("POST", INTENTS, {"kind": "retire", "key": row["key"], "if_version": row["version"], "reason": "fixture"}, key="fixture-key-2")
+    tok = lf._PRINCIPAL.set({"kind": "cognito", "id": "fixture-agent-principal", "sub": "s", "groups": [], "allowed": True})
+    try:
+        asyncio.run(lane.record_trip_correction({**RETURNED, "reason": "fixture"}))
+    finally:
+        lf._PRINCIPAL.reset(tok)
+    log = writes()
+    assert {e["principal"] for e in log} == {"you", "agent"}
+    assert not {e["principal"] for e in log} & {SUB, "fixture-agent-principal", "s"}
+    assert {rw.principal_word(d) for d in ("human", "agent", "service")} == {"you", "agent", "scheduler"}
