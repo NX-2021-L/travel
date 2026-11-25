@@ -274,8 +274,9 @@ def _version(values) -> str:
 
 # RowSourceRef.label (kit lane 2Y, the W2b kit release; FLY-TSK-093): the chip text for each record a trip came from,
 # in canvas A7.7's readable words ("flight · 2026-11-06", "stay · 3 nights", "car rental · 2 days", "drive · <date>"; never
-# a place, which the trip label carries), from the trip's own legs, stays and rentals. A record the trip lists with none of them is served without a label. Served only once think is live on W2b.
-SERVE_SOURCE_LABELS = False
+# a place, which the trip label carries), from the trip's own legs, stays and rentals. A record the trip lists with none
+# of them is served without a label. On since think went live on W2b (intelligence 958).
+SERVE_SOURCE_LABELS = True
 _KIND_WORDS = {"flight": "flight", "drive": "drive"}  # movements; stays and rentals are counted below
 
 

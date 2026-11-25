@@ -1,7 +1,7 @@
 """FLY-TSK-093 (DVP-PLN-021 lane 2Z): trips rows' source refs carry the chip text the Travel board draws.
 
 "flight · 2026-11-06", "stay · 3 nights" (canvas A7.7): one label per record the trip came from, from the trip's own legs, stays
-and rentals. Behind SERVE_SOURCE_LABELS until think is live on the W2b kit (RowSourceRef.label, kit lane 2Y).
+and rentals. SERVE_SOURCE_LABELS is on since think went live on the W2b kit (RowSourceRef.label, kit lane 2Y).
 Synthetic values only.
 """
 import sys
@@ -22,7 +22,9 @@ TRIP = {"key": "aaaaaaaaaaaa", "record_ids": ["aaaaaaaaaaaa", "lodging-000000000
         "rentals": [{"record_id": "car_rental-0000000000000002", "pickup_date": "2026-11-06", "dropoff_date": "2026-11-08"}]}
 
 
-def test_off_until_the_w2b_kit_is_live():
+def test_served_now_think_is_on_the_w2b_kit(monkeypatch):
+    assert rr.SERVE_SOURCE_LABELS  # think is live on @io-kit/records 0.7.0 (intelligence 958)
+    monkeypatch.setattr(rr, "SERVE_SOURCE_LABELS", False)
     row = rr._trip_row(TRIP)
     assert all(set(s) == {"recordset", "key"} for s in row["sources"])
 

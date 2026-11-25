@@ -76,7 +76,8 @@ def test_trips_rows_are_the_engine_in_listing_order_with_lineage():
     assert len(body["rows"]) == 2
     assert [r["values"]["state"] for r in body["rows"]] == ["upcoming", "past"]  # order_trips_for_listing: live, then past
     for r in body["rows"]:
-        assert r["sources"] == [{"recordset": rr.SOURCE_SET, "key": rid} for rid in r["values"]["record_ids"]]
+        assert [{k: v for k, v in s.items() if k != "label"} for s in r["sources"]] == [
+            {"recordset": rr.SOURCE_SET, "key": rid} for rid in r["values"]["record_ids"]]  # a label rides along (2Z)
         assert r["source"] == r["sources"][0]  # the deprecated alias is the first source
         assert set(r["values"]) == {c["id"] for c in rr.TRIP_COLUMNS}
     assert body["stale"] is None and body["next_cursor"] is None
