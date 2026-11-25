@@ -138,7 +138,7 @@ CORRECTION_COLUMNS = [
     # A retired correction is served with Row.retired true (contract 0.5.0) and its values unchanged, so the row
     # carries no status, retired_at or retired_by: the retire is the writes log's entry (FLY-TSK-089).
     # Shown: the board's id, kind, date, reason and meta (canvas A6.7, A7.7); the rest is served and hidden by default.
-    # meta is the line under the reason: "session · YYYY-MM-DD HH:MM", or the time alone when no session is served.
+    # meta is the line under the reason: the created time alone, YYYY-MM-DD HH:MM (A14); the session column stays hidden.
     _col("correction_id", "correction", "text"), _col("kind", "kind", "enum", _kind_options(), True),
     _col("date", "date", "text", editable=True), _col("date_iso", "date (iso)", "date", default_hidden=True),
     _col("record_ids", "record ids", "json", editable=True, default_hidden=True), _col("reason", "reason", "text"),
@@ -325,12 +325,11 @@ def _trip_row(t) -> dict:
             "sources": sources, "source": sources[0] if sources else None}
 
 
-def correction_meta(c, door=None) -> str:
-    """Canvas A6.7: who wrote it, by door ("you", "agent", "scheduler"; 3A pass 3 N31, as the writes log names them),
-    then the created time as YYYY-MM-DD HH:MM, joined by " · ". Never a session or lane id."""
+def correction_meta(c) -> str:
+    """Canvas A6.7 as amended by A14 (DOC-E97012DCAC20 v33): the created time alone, YYYY-MM-DD HH:MM. The session is
+    id text, so it stays served in its own hidden column and never joins this line; who wrote it is in the ledger."""
     created = str(c.get("created_at") or "")
-    when = created[:16].replace("T", " ") if len(created) >= 16 else created
-    return " · ".join(p for p in (records_writes.principal_word(door or "agent"), when) if p)
+    return created[:16].replace("T", " ") if len(created) >= 16 else created
 
 
 def correction_label(c) -> str:
@@ -343,12 +342,9 @@ def correction_label(c) -> str:
 _UNVERSIONED = ("label",)
 
 
-def _correction_row(c, audit=None) -> dict:
-    """One corrections row. audit is the correction's writes-log attributes; read here when the caller has none."""
-    if audit is None:
-        audit = lane_2e_corrections.load_correction_audit().get(c["correction_id"], {})
+def _correction_row(c) -> dict:
     values = {col["id"]: c.get(col["id"]) for col in CORRECTION_COLUMNS if col["id"] not in _UNVERSIONED}
-    values["meta"] = correction_meta(c, audit.get("door"))
+    values["meta"] = correction_meta(c)
     row = {"key": c["correction_id"], "version": _version(values), "values": values, "sources": [], "source": None}
     if c.get("status") == "retired":  # listed, dimmed by the view; the values stay as they were, the version moves
         row["retired"] = True
@@ -436,9 +432,7 @@ def _trips_rows(query):
 
 
 def _correction_rows(query):
-    audit = lane_2e_corrections.load_correction_audit()
-    rows = [_correction_row(c, audit.get(c["correction_id"], {}))
-            for c in lane_2e_corrections.load_corrections(None, include_retired=True)]
+    rows = [_correction_row(c) for c in lane_2e_corrections.load_corrections(None, include_retired=True)]
     return rows, [], _vintage(CORRECTIONS, rows)
 
 

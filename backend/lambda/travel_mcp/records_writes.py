@@ -136,7 +136,7 @@ def _create(routes, intent, caller, key):
         args["method"] = DOOR_CONFIRMATION_METHOD
     c = _call(corrections.record_trip_correction, args, caller, door="human", idempotency_key=key)
     undo, _ = _undo_for(c, {"idempotency_key": key}, caller)
-    return _receipt(routes, [routes._correction_row(c, {"door": "human"})], undo)
+    return _receipt(routes, [routes._correction_row(c)], undo)
 
 
 def _same_create(held, intent, caller):
@@ -164,13 +164,13 @@ def _retire(routes, intent, caller, key):
         raise Refusal(404, "Not found", "No such correction.", "key", problem=True)
     audit = corrections.load_correction_audit().get(cid, {})
     if c["status"] == "retired" and audit.get("retire_idempotency_key") == key:
-        return _receipt(routes, [routes._correction_row(c, audit)])  # a replay: the same end state, written once
-    row = routes._correction_row(c, audit)
+        return _receipt(routes, [routes._correction_row(c)])  # a replay: the same end state, written once
+    row = routes._correction_row(c)
     if str(row["version"]) != str(intent["if_version"]):
         raise Refusal(409, "Conflict", "The correction changed since it was read.", rows=[row], conflict=True)
     done = _call(corrections.retire_trip_correction, {"correction_id": cid, "reason": intent["reason"]}, caller,
                  door="human", idempotency_key=key, via="retire")
-    return _receipt(routes, [routes._correction_row(done, audit)])
+    return _receipt(routes, [routes._correction_row(done)])
 
 
 def _undo(routes, intent, caller, key):
@@ -182,14 +182,14 @@ def _undo(routes, intent, caller, key):
                       problem=True)
     if c["status"] == "retired":
         if audit.get("retire_idempotency_key") == key:
-            return _receipt(routes, [routes._correction_row(c, audit)])  # a replay
+            return _receipt(routes, [routes._correction_row(c)])  # a replay
         raise Refusal(409, "Conflict", "The correction was retired since; there is nothing to undo.",
-                      rows=[routes._correction_row(c, audit)], conflict=True)
+                      rows=[routes._correction_row(c)], conflict=True)
     if _now() >= _parse_time(c["created_at"]) + UNDO_WINDOW:
         raise Refusal(422, "Undo not available", "The undo window has passed.", "undo_token", problem=True)
     args = {"correction_id": cid, **({"reason": intent["reason"]} if intent.get("reason") else {})}
     done = _call(corrections.retire_trip_correction, args, caller, door="human", idempotency_key=key, via="undo")
-    return _receipt(routes, [routes._correction_row(done, audit)])
+    return _receipt(routes, [routes._correction_row(done)])
 
 
 _KINDS = {"create": _create, "retire": _retire, "undo": _undo}
