@@ -2,7 +2,8 @@
 
 A deployment is exactly one of two things, named by the DOOR_MODE setting:
   public    reachable through a Function URL. Answers HTTP-shaped events (requestContext.http) only;
-            refuses anything else (mirror of finance's NonHttpEventRefused).
+            refuses anything else (mirror of finance's NonHttpEventRefused), except that with
+            INTERNAL_INVOKER_ROLE set it also answers a direct event from that role (dual mode, FLY-TSK-098).
   internal  reachable only by direct invocation. Answers a direct event from the role named by
             INTERNAL_INVOKER_ROLE; refuses any HTTP-shaped event.
 No default: an absent or unknown DOOR_MODE refuses to start, like every other setting (lane 1A).
@@ -80,12 +81,21 @@ def is_http_shaped(event) -> bool:
 
 
 def admit(event, mode, role, deploy=""):
-    """Return "http", "direct" or "health" when the event may be served in this mode; raise a refusal otherwise."""
+    """Return "http", "direct" or "health" when the event may be served in this mode; raise a refusal otherwise.
+
+    Dual mode (FLY-TSK-098, FR-54): a public edge with INTERNAL_INVOKER_ROLE set also answers a direct event from that
+    one role, so io-graph's function can invoke it while the public connector keeps answering. With no role set, a
+    public edge refuses every non-HTTP event exactly as before."""
     http = is_http_shaped(event)
     if mode == "public":
-        if not http:
+        if http:
+            return "http"
+        if not role or not isinstance(event, dict):
             raise NonHttpEventRefused("public edge refuses an event that did not come through its Function URL")
-        return "http"
+        claimed, mcp = event.get("invoker_role"), event.get("mcp")
+        if not isinstance(mcp, dict) or not isinstance(claimed, str) or claimed != role:
+            raise NonHttpEventRefused("public edge answers a direct event only from its named invoker role")
+        return "health" if mcp.get("method") == HEALTH_METHOD else "direct"
     if http:
         raise HttpEventRefused("internal door refuses an HTTP-shaped event")
     claimed, mcp = event.get("invoker_role"), event.get("mcp")
