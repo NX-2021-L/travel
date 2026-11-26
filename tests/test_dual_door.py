@@ -70,9 +70,11 @@ def test_deploy_script_grants_the_named_role_on_a_public_edge_only_when_asked():
     assert '"${INVOKER_GRANT:-false}" = "true"' in public_part
     assert '--principal "${INTERNAL_INVOKER_ROLE}"' in public_part
     assert "--action lambda:InvokeFunction " in public_part
+    assert "*ResourceConflictException*)" in public_part  # a repeat deploy finds the grant without lambda:GetPolicy
+    assert "get-policy" not in sh  # the deploy role is denied lambda:GetPolicy
 
 
-def test_template_grants_the_invoker_on_a_public_edge():
+def test_the_public_edge_grant_comes_from_the_script_only():
     yaml = pytest.importorskip("yaml")
 
     class L(yaml.SafeLoader):
@@ -81,8 +83,7 @@ def test_template_grants_the_invoker_on_a_public_edge():
         loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode)
         else loader.construct_mapping(node) if isinstance(node, yaml.MappingNode) else loader.construct_scalar(node)))
     t = yaml.load((ROOT / "infra" / "cloudformation" / "travel-deployment.yaml").read_text(), Loader=L)
-    assert "IsPublicEdge" not in json.dumps(t["Conditions"]["GrantsInvoker"])
-    assert t["Resources"]["InternalInvokerInvoke"]["Condition"] == "GrantsInvoker"
+    assert "IsPublicEdge" in json.dumps(t["Conditions"]["GrantsInvoker"])  # the stack grants internal edges only
 
 
 # --- through the real handler ---
