@@ -166,7 +166,11 @@ def test_internal_invoke_grants_are_scoped_to_the_named_roles_only():
         assert p["Principal"] == {"Ref": param}  # one named role, never a wildcard
         assert "FunctionUrlAuthType" not in p
         cond = T["Conditions"][res["Condition"]]
-        assert cond["Fn::And"][0] == {"Fn::Not": [{"Fn::Condition": "IsPublicEdge"}]}  # absent for a public edge
+        if name == "InternalDeployerInvoke":
+            assert cond["Fn::And"][0] == {"Fn::Not": [{"Fn::Condition": "IsPublicEdge"}]}  # absent for a public edge
+        else:  # FLY-TSK-098 dual mode: either door, only with a named role and InvokerGrant true
+            assert cond["Fn::And"] == [{"Fn::Not": [{"Fn::Equals": [{"Ref": "InternalInvokerRole"}, ""]}]},
+                                       {"Fn::Equals": [{"Ref": "InvokerGrant"}, "true"]}]
         assert T["Parameters"][param]["Default"] == ""  # an unset role grants nobody
 
 

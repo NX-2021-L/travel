@@ -89,7 +89,7 @@ Conditions:
   HasFinanceFunction: !Not [!Equals [!Ref FinanceReadFunction, ""]]
   FinanceReadIsArn: !Equals [!Select [0, !Split [":", !Ref FinanceReadFunction]], "arn"]
   IsPublicEdge: !Equals [!Ref PublicEdge, "true"]
-  GrantsInvoker: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalInvokerRole, ""]], !Equals [!Ref InvokerGrant, "true"]]
+  GrantsInvoker: !And [!Not [!Equals [!Ref InternalInvokerRole, ""]], !Equals [!Ref InvokerGrant, "true"]]
   HasCodeBucket: !Not [!Equals [!Ref CodeS3Bucket, ""]]
   GrantsDeployer: !And [!Not [!Condition IsPublicEdge], !Not [!Equals [!Ref InternalDeployRole, ""]]]
   HasCodeVersion: !Not [!Equals [!Ref CodeS3ObjectVersion, ""]]
@@ -270,7 +270,7 @@ Resources:
       Principal: "*"
       FunctionUrlAuthType: NONE
 
-  # Internal door only. THE authorization boundary: Lambda does not attest the caller inside an event, so the
+  # Either door (a public edge with InvokerGrant is dual mode, FLY-TSK-098). THE authorization boundary: Lambda does not attest the caller inside an event, so the
   # in-function role check is a tripwire; these resource-policy grants (one role each, no wildcard) are the gate.
   InternalInvokerInvoke:
     Type: AWS::Lambda::Permission

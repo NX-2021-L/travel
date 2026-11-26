@@ -211,6 +211,9 @@ class _RequestHolder:
 _PRINCIPAL = _RequestHolder(None)
 _IDEMPOTENCY_KEY = _RequestHolder("")
 _ACTING_SESSION = _RequestHolder("")  # internal door only: the event's session (FLY-TSK-032-0B); "" elsewhere
+# True only while lambda_handler serves an event door.admit admitted as "direct": a forged io_kit_mcp block on any other
+# event never makes it the internal-role principal, in either door mode (FLY-TSK-098 dual mode)
+_DIRECT_ADMITTED = _RequestHolder(False)
 
 
 def stamp_session(args: Dict[str, Any]) -> str:
@@ -1114,7 +1117,7 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
     # Anything without it never reaches a tool (defence in depth).
     ctx = event.get("io_kit_mcp") or {}
     edge_principal = ctx.get("principal")
-    internal_door = DOOR_MODE == "internal" and ctx.get("pool") == "internal-door"
+    internal_door = _DIRECT_ADMITTED.get() is True and ctx.get("pool") == "internal-door"
     if not isinstance(edge_principal, dict) or not edge_principal.get("sub"):
         return {
             "statusCode": 401,
@@ -1128,7 +1131,7 @@ async def _handle_lambda_event_inner(event: Dict[str, Any]) -> Dict[str, Any]:
         "_pool": ctx.get("pool") or "iograph",
     })
     if internal_door:  # admitted by door.admit as the named role; not a Cognito sub
-        # the two keys are read ONLY here, from the block door.direct_to_http built; a public-mode event never gets here
+        # the two keys are read ONLY here, from the block door.direct_to_http built; an HTTP event never gets here
         person = edge_principal.get("acting_principal") or ""
         principal = {"kind": "internal-role", "id": person or edge_principal["sub"], "role": edge_principal["sub"],
                      "sub": edge_principal["sub"], "acting_principal": person, "groups": [], "allowed": True,
@@ -1229,8 +1232,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return _door.refusal(exc)
     if shape == "health":  # LD-39: one read-only liveness answer; touches no tool, table or network
         return _door.health(event, SURFACE_NAME)
-    if shape == "direct":  # internal door: the named role, straight to the tools (no bearer; IAM is the gate)
-        return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE, INTERNAL_DEPLOY_ROLE), context)
+    if shape == "direct":  # the named role, either door, straight to the tools (no bearer; IAM is the gate)
+        _DIRECT_ADMITTED.set(True)
+        try:
+            return _edge_inner(_door.direct_to_http(event, INTERNAL_INVOKER_ROLE, INTERNAL_DEPLOY_ROLE), context)
+        finally:
+            _DIRECT_ADMITTED.reset()
     if _records_routes.is_records_path(event):  # FLY-TSK-083: read-only records routes, human-door token only, never a tool
         return _with_cors(event, _records_routes.handle(event))
     door = _enceladus_door(event)

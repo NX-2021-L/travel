@@ -186,6 +186,24 @@ aws lambda update-function-url-config \
     --output text --query 'FunctionUrl' \
     || log "WARN: could not clear Function URL CORS; verify will report a doubled header"
 
+# FLY-TSK-098 (FR-54): dual mode. A public edge whose settings name INTERNAL_INVOKER_ROLE and say INVOKER_GRANT=true
+# also lets that one role invoke the function directly. This grant is the gate; door.admit's role check is the tripwire.
+if [ -n "${INTERNAL_INVOKER_ROLE:-}" ] && [ "${INVOKER_GRANT:-false}" = "true" ]; then
+    if aws lambda get-policy --function-name "${FUNCTION_NAME}" --region "${REGION}" --query Policy --output text 2>/dev/null \
+        | grep -q '"Sid":"allow-internal-invoker"'; then
+        log "Internal invoker grant already present"
+    else
+        log "Granting lambda:InvokeFunction to the internal invoker role..."
+        aws lambda add-permission \
+            --function-name "${FUNCTION_NAME}" \
+            --statement-id allow-internal-invoker \
+            --action lambda:InvokeFunction \
+            --principal "${INTERNAL_INVOKER_ROLE}" \
+            --region "${REGION}" \
+            --output text --query Statement >/dev/null
+    fi
+fi
+
 FUNC_URL=$(aws lambda get-function-url-config \
     --function-name "${FUNCTION_NAME}" \
     --region "${REGION}" \
